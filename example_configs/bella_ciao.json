@@ -23,13 +23,14 @@
     "preprocessing_num_workers": 1,
 
     "do_train": true,
-    "num_train_epochs": 50,
+    "num_train_epochs": 10,
     "gradient_accumulation_steps": 1,
     "gradient_checkpointing": true,
     "per_device_train_batch_size": 2,
     "learning_rate": 5e-5,
     "adam_beta1": 0.8,
     "adam_beta2": 0.99,
+    "logging_steps": 25,
 
     "do_eval": false, 
     "eval_steps": 1000,
@@ -39,5 +40,8 @@
     "fp16": true,
     "seed": 456,
 
-    "dataloader_num_workers":8
+    "dataloader_num_workers":8,
+
+
+    "optim": "adamw_bnb_8bit"
 }
