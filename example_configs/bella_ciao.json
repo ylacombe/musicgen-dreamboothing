@@ -1,0 +1,43 @@
+{
+    "push_to_hub": true,
+    "hub_model_id": "musicgen-melody-bella-ciao",
+    "report_to": ["wandb"],
+    "overwrite_output_dir": true,
+    "output_dir": "./bella_ciao_tmp",
+
+    "dataset_name": "patrickvonplaten/bella_ciao",    
+    "dataset_config_name": "default", 
+    "target_audio_column_name": "audio", 
+    "instance_prompt": "bella_ciao",
+    "train_split_name": "train",
+    "eval_split_name": "train",
+
+    "full_generation_sample_text": "80s blues track with groovy saxophone",
+    
+    "max_duration_in_seconds": 20,
+    "min_duration_in_seconds": 1.0,
+
+    "model_name_or_path": "ylacombe/musicgen-melody",
+
+
+    "preprocessing_num_workers": 1,
+
+    "do_train": true,
+    "num_train_epochs": 50,
+    "gradient_accumulation_steps": 1,
+    "gradient_checkpointing": true,
+    "per_device_train_batch_size": 2,
+    "learning_rate": 5e-5,
+    "adam_beta1": 0.8,
+    "adam_beta2": 0.99,
+
+    "do_eval": false, 
+    "eval_steps": 1000,
+    "per_device_eval_batch_size": 8,
+    "max_eval_samples": 50, 
+
+    "fp16": true,
+    "seed": 456,
+
+    "dataloader_num_workers":8
+}
