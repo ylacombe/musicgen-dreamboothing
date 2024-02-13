@@ -137,6 +137,10 @@ class DataTrainingArguments:
         default=None,
         metadata={"help": "The name of the dataset column containing the target audio data. Defaults to 'audio'"},
     )
+    text_column_name: str = field( #TODO
+        default=None,
+        metadata={"help": "The name of the dataset column containing the text data. Defaults to 'None'."},
+    )
     instance_prompt: str = field( # TODO
         default=None,
         metadata={"help": ""}
@@ -347,12 +351,18 @@ def main():
 
     
         if data_args.instance_prompt is not None:
-                logger.warning(
+            logger.warning(
             f"Using the following instance prompt: {data_args.instance_prompt}"
             )
-        else:
+        elif data_args.text_column_name not in raw_datasets["train"].column_names:
             raise ValueError(
-                f"--instance_prompt {data_args.instance_prompt} must be set."
+                f"--text_column_name {data_args.text_column_name} not found in dataset '{data_args.dataset_name}'. "
+                "Make sure to set `--text_column_name` to the correct text column - one of "
+                f"{', '.join(raw_datasets['train'].column_names)}."
+            )
+        elif data_args.text_column_name is None and data_args.instance_prompt is None:
+            raise ValueError(
+                f"--instance_prompt or --text_column_name must be set."
             )
 
         if data_args.max_train_samples is not None:
@@ -440,6 +450,7 @@ def main():
     min_target_length = data_args.min_duration_in_seconds * processor.feature_extractor.sampling_rate
     target_audio_column_name = data_args.target_audio_column_name
     conditional_audio_column_name = data_args.conditional_audio_column_name
+    text_column_name = data_args.text_column_name
     num_workers = data_args.preprocessing_num_workers
     feature_extractor_input_name = processor.feature_extractor.model_input_names[0]
 
@@ -451,6 +462,10 @@ def main():
             sample = batch[target_audio_column_name]
             inputs = processor.feature_extractor(sample["array"], sampling_rate=sample["sampling_rate"])
             batch[feature_extractor_input_name] = getattr(inputs, feature_extractor_input_name)[0]
+            
+        if text_column_name is not None:
+            text = batch[text_column_name]
+            batch["input_ids"] = processor.tokenizer(text)["input_ids"]
 
         # load audio
         target_sample = batch[target_audio_column_name]
@@ -479,30 +494,41 @@ def main():
             input_columns=["target_length"],
         )
         
-    with training_args.main_process_first(desc="instance_prompt preprocessing"):
-        # compute text embeddings on one process since it's only a forward pass
-        # do it on CPU for simplicity
-        instance_prompt_tokenized = torch.tensor(instance_prompt_tokenized["input_ids"]).to(model.device)
-        text_hidden_states = model.text_encoder(input_ids=instance_prompt_tokenized.unsqueeze(0)).last_hidden_state
-        # optionally project encoder_hidden_states
-        if model.text_encoder.config.hidden_size != model.decoder.config.hidden_size:
-            text_hidden_states = model.enc_to_dec_proj(text_hidden_states)
-            
-        null_audio_hidden_states = torch.zeros((1, 1, model.config.num_chroma))
-        null_audio_hidden_states[:, :, 0] = 1
-        if model.config.num_chroma != model.decoder.config.hidden_size:
-            null_audio_hidden_states = model.audio_enc_to_dec_proj(null_audio_hidden_states)
-            
-        # pad or truncate to config.chroma_length
-        if null_audio_hidden_states.shape[1] < model.config.chroma_length:
-            n_repeat = int(math.ceil(model.config.chroma_length / null_audio_hidden_states.shape[1]))
-            null_audio_hidden_states = null_audio_hidden_states.repeat(1, n_repeat, 1)
-        null_audio_hidden_states = null_audio_hidden_states[:, : model.config.chroma_length]
-        null_audio_hidden_states = torch.cat([null_audio_hidden_states, text_hidden_states], dim=1)
+    if data_args.instance_prompt is not None:
+        with training_args.main_process_first(desc="instance_prompt preprocessing"):
+            # compute text embeddings on one process since it's only a forward pass
+            # do it on CPU for simplicity
+            instance_prompt_tokenized = torch.tensor(instance_prompt_tokenized["input_ids"]).to(model.device)
+            text_hidden_states = model.text_encoder(input_ids=instance_prompt_tokenized.unsqueeze(0)).last_hidden_state
+            # optionally project encoder_hidden_states
+            if model.text_encoder.config.hidden_size != model.decoder.config.hidden_size:
+                text_hidden_states = model.enc_to_dec_proj(text_hidden_states)
+                
+            null_audio_hidden_states = torch.zeros((1, 1, model.config.num_chroma))
+            null_audio_hidden_states[:, :, 0] = 1
+            if model.config.num_chroma != model.decoder.config.hidden_size:
+                null_audio_hidden_states = model.audio_enc_to_dec_proj(null_audio_hidden_states)
+                
+            # pad or truncate to config.chroma_length
+            if null_audio_hidden_states.shape[1] < model.config.chroma_length:
+                n_repeat = int(math.ceil(model.config.chroma_length / null_audio_hidden_states.shape[1]))
+                null_audio_hidden_states = null_audio_hidden_states.repeat(1, n_repeat, 1)
+            null_audio_hidden_states = null_audio_hidden_states[:, : model.config.chroma_length]
+            null_audio_hidden_states = torch.cat([null_audio_hidden_states, text_hidden_states], dim=1)
+    else:
+        with training_args.main_process_first(desc="null audio preprocessing"):
+            null_audio_hidden_states = torch.zeros((1, 1, model.config.num_chroma))
+            null_audio_hidden_states[:, :, 0] = 1
+            if model.config.num_chroma != model.decoder.config.hidden_size:
+                null_audio_hidden_states = model.audio_enc_to_dec_proj(null_audio_hidden_states)
+                
+            # pad or truncate to config.chroma_length
+            if null_audio_hidden_states.shape[1] < model.config.chroma_length:
+                n_repeat = int(math.ceil(model.config.chroma_length / null_audio_hidden_states.shape[1]))
+                null_audio_hidden_states = null_audio_hidden_states.repeat(1, n_repeat, 1)
+            null_audio_hidden_states = null_audio_hidden_states[:, : model.config.chroma_length]
         
         
-    #distributed_state = PartialState()
-    #audio_decoder = model.audio_encoder.to(distributed_state.device)
     audio_decoder = model.audio_encoder
     def apply_audio_decoder(batch):
         batch["labels"] = audio_decoder.encode(torch.tensor(batch["labels"]).to(audio_decoder.device))["audio_codes"]
@@ -521,6 +547,15 @@ def main():
         audio_proj = model.audio_enc_to_dec_proj
 
     def apply_audio_proj(batch):
+        if text_column_name is not None:
+            # compute text embeddings on one process since it's only a forward pass
+            # do it on CPU for simplicity
+            text_tokenized = torch.tensor(batch["input_ids"]).to(model.device)
+            text_hidden_states = model.text_encoder(input_ids=text_tokenized.unsqueeze(0)).last_hidden_state
+            # optionally project encoder_hidden_states
+            if model.text_encoder.config.hidden_size != model.decoder.config.hidden_size:
+                text_hidden_states = model.enc_to_dec_proj(text_hidden_states)
+
         if conditional_audio_column_name is not None:
             audio_hidden_states = torch.tensor(batch[feature_extractor_input_name])
             if model.config.num_chroma != model.decoder.config.hidden_size:
@@ -533,8 +568,10 @@ def main():
             audio_hidden_states = audio_hidden_states[:, : model.config.chroma_length]
             
             hidden_states = torch.cat([audio_hidden_states, text_hidden_states], dim=1)
-        else:
+        elif data_args.instance_prompt is not None:
             hidden_states = null_audio_hidden_states
+        else:
+            hidden_states = torch.cat([null_audio_hidden_states, text_hidden_states], dim=1)
 
         batch["encoder_hidden_states"] = hidden_states        
         return batch

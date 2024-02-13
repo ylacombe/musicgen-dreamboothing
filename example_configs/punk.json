@@ -1,20 +1,20 @@
 {
     "push_to_hub": false,
-    "hub_model_id": "musicgen-melody-bella-ciao",
+    "hub_model_id": "musicgen-melody-punk",
     "report_to": ["wandb"],
-    "overwrite_output_dir": true,
-    "output_dir": "./bella_ciao_tmp",
+    "overwrite_output_dir": false,
+    "output_dir": "./punk_tmp",
 
-    "dataset_name": "ylacombe/bella_ciao",    
+    "dataset_name": "ylacombe/music_genres_Punk",
     "dataset_config_name": "default", 
-    "target_audio_column_name": "vocals", 
-    "instance_prompt": "bella ciao",
+    "target_audio_column_name": "audio", 
+    "instance_prompt": "Punk",
     "train_split_name": "train",
     "eval_split_name": "train",
 
     "full_generation_sample_text": "80s blues track with groovy saxophone",
     
-    "max_duration_in_seconds": 20,
+    "max_duration_in_seconds": 32,
     "min_duration_in_seconds": 1.0,
 
     "model_name_or_path": "ylacombe/musicgen-melody",
@@ -23,16 +23,17 @@
     "preprocessing_num_workers": 1,
 
     "do_train": true,
-    "num_train_epochs": 20,
+    "num_train_epochs": 40,
     "gradient_accumulation_steps": 1,
     "gradient_checkpointing": true,
-    "per_device_train_batch_size": 1,
-    "learning_rate": 5e-7,
+    "per_device_train_batch_size": 4,
+    "learning_rate": 3e-6,
     "adam_beta1": 0.9,
     "adam_beta2": 0.95,
     "logging_steps": 25,
-    "weight_decay": 0.1,
-    "max_train_samples": 10,
+    "weight_decay": 0.05,
+    "max_train_samples": 200,
+
 
     "do_eval": false, 
     "eval_steps": 1000,
@@ -41,6 +42,7 @@
 
     "fp16": true,
     "seed": 456,
+    "save_total_limit": 3,
 
     "dataloader_num_workers":8
 }
