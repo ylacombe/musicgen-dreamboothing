@@ -8,7 +8,7 @@
     "dataset_name": "ylacombe/tiny-humming",
     "dataset_config_name": "default", 
     "target_audio_column_name": "audio", 
-    "text_column_name": "description",
+    "instance_prompt": "humming",
     "train_split_name": "train",
     "eval_split_name": "train",
 
@@ -17,29 +17,37 @@
     "max_duration_in_seconds": 20,
     "min_duration_in_seconds": 1.0,
 
-    "model_name_or_path": "ylacombe/musicgen-melody-large",
+    "model_name_or_path": "ylacombe/musicgen-melody",
 
 
     "preprocessing_num_workers": 1,
 
     "do_train": true,
-    "num_train_epochs": 40,
+    "num_train_epochs": 20,
     "gradient_accumulation_steps": 1,
     "gradient_checkpointing": true,
-    "per_device_train_batch_size": 1,
-    "learning_rate": 3e-5,
+    "per_device_train_batch_size": 2,
+    "learning_rate": 1e-6,
     "adam_beta1": 0.9,
     "adam_beta2": 0.95,
     "logging_steps": 25,
-    "weight_decay": 0.05,
+    "weight_decay": 0.1,
 
-    "do_eval": false, 
-    "eval_steps": 1000,
-    "per_device_eval_batch_size": 8,
-    "max_eval_samples": 50, 
+    "pad_token_id": 2048,
+    "decoder_start_token_id": 2048,
+
+    "do_eval": true, 
+    "predict_with_generate": true,
+    "include_inputs_for_metrics": true,
+    "eval_steps": 100,
+    "evaluation_strategy": "steps",
+    "per_device_eval_batch_size": 2,
+    "max_eval_samples": 8, 
+    "generation_max_length": 400,
 
     "fp16": true,
     "seed": 456,
 
-    "dataloader_num_workers":8
+    "dataloader_num_workers":8,
+    "add_audio_samples_to_wandb": true
 }

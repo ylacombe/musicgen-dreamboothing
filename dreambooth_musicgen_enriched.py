@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-""" Fine-tuning MusicGen for text-to-music using 🤗 Transformers Trainer"""
+""" Fine-tuning MusicGen for text-to-music using 🤗 Transformers Seq2SeqTrainer"""
 
 import functools
 import json
@@ -38,16 +38,18 @@ from transformers import (
     AutoConfig,
     AutoFeatureExtractor,
     AutoModelForTextToWaveform,
+    AutoModel,
     AutoProcessor,
     AutoTokenizer,
     HfArgumentParser,
-    Trainer,
-    TrainingArguments,
+    Seq2SeqTrainer,
+    Seq2SeqTrainingArguments,
     set_seed,
 )
 from transformers.trainer_utils import get_last_checkpoint, is_main_process
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
+from transformers.integrations import is_wandb_available # TODO: keep ?
 from accelerate import PartialState
 
 
@@ -66,6 +68,25 @@ def list_field(default=None, metadata=None):
 
 
 #### ARGUMENTS
+
+class MusicgenTrainer(Seq2SeqTrainer):
+    def _pad_tensors_to_max_len(self, tensor, max_length):
+        if self.tokenizer is not None and hasattr(self.tokenizer, "pad_token_id"):
+            # If PAD token is not defined at least EOS token has to be defined
+            pad_token_id = (
+                self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else self.tokenizer.eos_token_id
+            )
+        else:
+            if self.model.config.pad_token_id is not None:
+                pad_token_id = self.model.config.pad_token_id
+            else:
+                raise ValueError("Pad_token_id must be set in the configuration of the model, in order to pad tensors")
+
+        padded_tensor = pad_token_id * torch.ones(
+            (tensor.shape[0], max_length, tensor.shape[2]), dtype=tensor.dtype, device=tensor.device
+        )
+        padded_tensor[:, : tensor.shape[1]] = tensor
+        return padded_tensor
 
 
 @dataclass
@@ -95,11 +116,17 @@ class ModelArguments:
         default="main",
         metadata={"help": "The specific model version to use (can be a branch name, tag name or commit id)."},
     )
-
-
+    pad_token_id: int = field(
+        default=None,
+        metadata={"help": "If specified, change the model pad token id."},
+    )
+    decoder_start_token_id: int = field(
+        default=None,
+        metadata={"help": "If specified, change the model decoder start token id."},
+    )
 
 @dataclass
-class DataTrainingArguments:
+class DataSeq2SeqTrainingArguments:
     """
     Arguments pertaining to what data we are going to input our model for training and eval.
 
@@ -231,6 +258,12 @@ class DataTrainingArguments:
             )
         },
     )
+    add_audio_samples_to_wandb: bool = field(
+        default=False,
+        metadata={
+            "help": "If set and if `wandb` in args.report_to, will add generated audio samples to wandb logs."
+        }
+    )
     
 @dataclass
 class DataCollatorMusicGenWithPadding:
@@ -239,6 +272,7 @@ class DataCollatorMusicGenWithPadding:
     Args:
         processor (:class:`~transformers.AutoProcessor`)
             The processor used for proccessing the data.
+        # TODO: adapt
         padding (:obj:`bool`, :obj:`str` or :class:`~transformers.tokenization_utils_base.PaddingStrategy`, `optional`, defaults to :obj:`True`):
             Select a strategy to pad the returned sequences (according to the model's padding side and padding index)
             among:
@@ -267,14 +301,24 @@ class DataCollatorMusicGenWithPadding:
     def __call__(self, features: List[Dict[str, Union[List[int], torch.Tensor]]]) -> Dict[str, torch.Tensor]:
         # split inputs and labels since they have to be of different lengths and need
         # different padding methods
-        labels = [torch.tensor(feature["labels"]).squeeze(0) for feature in features]
+        labels = [torch.tensor(feature["labels"]).transpose(0,1) for feature in features]
+        # (bsz, seq_len, num_codebooks)
         labels = torch.nn.utils.rnn.pad_sequence(labels,batch_first=True,padding_value=-100)
         
-        encoder_hidden_states = [torch.tensor(feature["encoder_hidden_states"]).squeeze(0) for feature in features]
-        encoder_hidden_states = torch.nn.utils.rnn.pad_sequence(encoder_hidden_states,batch_first=True,padding_value=0)
+        
+        input_ids = [{"input_ids": feature["input_ids"]} for feature in features]
+        input_ids = self.processor.tokenizer.pad(input_ids, return_tensors="pt")
+        
 
-        # WORKS for musicgenmelody, not necessarily for other
-        batch= {"labels":labels, "encoder_hidden_states":encoder_hidden_states}
+        batch= {"labels":labels, **input_ids}
+        
+        
+        if self.feature_extractor_input_name in features[0]:
+            # TODO: verify that it works
+            input_values = [{self.feature_extractor_input_name: feature[self.feature_extractor_input_name]} for feature in features]
+            input_values = self.processor.feature_extractor.pad(input_values, return_tensors="pt")
+            
+            batch[self.feature_extractor_input_name: input_values]
         
         return batch
     
@@ -284,7 +328,7 @@ def main():
     # or by passing the --help flag to this script.
     # We now keep distinct sets of args, for a cleaner separation of concerns.
 
-    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments))
+    parser = HfArgumentParser((ModelArguments, DataSeq2SeqTrainingArguments, Seq2SeqTrainingArguments))
     if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
         # If we pass only one argument to the script and it's the path to a json file,
         # let's parse it to get our arguments.
@@ -380,7 +424,6 @@ def main():
 
 
     # 3. Next, let's load the config as we might need it to create
-    # the tokenizer
     # load config
     config = AutoConfig.from_pretrained(
         model_args.model_name_or_path,
@@ -388,9 +431,14 @@ def main():
         token=data_args.token,
         trust_remote_code=data_args.trust_remote_code,
     )
-
-
-    # 5. Now we can instantiate the processor and model
+    
+    # update pad token id and decoder_start_token_id
+    config.update({
+        "pad_token_id": model_args.pad_token_id if model_args.pad_token_id is not None else model.config.pad_token_id,
+        "decoder_start_token_id": model_args.decoder_start_token_id if model_args.decoder_start_token_id is not None else model.config.decoder_start_token_id,
+    })
+    
+    # 4. Now we can instantiate the processor and model
     # Note for distributed training, the .from_pretrained methods guarantee that only
     # one local process can concurrently download model & vocab.
 
@@ -402,12 +450,9 @@ def main():
         trust_remote_code=data_args.trust_remote_code,
     )
     
+    instance_prompt_tokenized = None
     if data_args.instance_prompt is not None:
         instance_prompt_tokenized = processor.tokenizer(data_args.instance_prompt)
-
-    # adapt config
-    # TODO: remove ?
-    # config.update({})
 
     # create model
     model = AutoModelForTextToWaveform.from_pretrained(
@@ -423,13 +468,13 @@ def main():
         model.config.audio_encoder._name_or_path,                                                   
         )
     
-    # 6. Now we preprocess the datasets including loading the audio, resampling and normalization
+    # 5. Now we preprocess the datasets including loading the audio, resampling and normalization
     # Thankfully, `datasets` takes care of automatically loading and resampling the audio,
     # so that we just need to set the correct target sampling rate and normalize the input
     # via the `feature_extractor`
 
-    # make sure that dataset decodes audio with correct sampling rate
     # TODO: add demucs
+    # Drop vocals
     
     # resample target audio
     dataset_sampling_rate = next(iter(raw_datasets.values())).features[data_args.target_audio_column_name].sampling_rate
@@ -453,6 +498,12 @@ def main():
     text_column_name = data_args.text_column_name
     num_workers = data_args.preprocessing_num_workers
     feature_extractor_input_name = processor.feature_extractor.model_input_names[0]
+    
+    if data_args.instance_prompt is not None:
+        with training_args.main_process_first(desc="instance_prompt preprocessing"):
+            # compute text embeddings on one process since it's only a forward pass
+            # do it on CPU for simplicity
+            instance_prompt_tokenized = instance_prompt_tokenized["input_ids"]
 
     # Preprocessing the datasets.
     # We need to read the audio files as arrays and tokenize the targets.
@@ -466,6 +517,8 @@ def main():
         if text_column_name is not None:
             text = batch[text_column_name]
             batch["input_ids"] = processor.tokenizer(text)["input_ids"]
+        else:
+            batch["input_ids"] = instance_prompt_tokenized
 
         # load audio
         target_sample = batch[target_audio_column_name]
@@ -494,45 +547,9 @@ def main():
             input_columns=["target_length"],
         )
         
-    if data_args.instance_prompt is not None:
-        with training_args.main_process_first(desc="instance_prompt preprocessing"):
-            # compute text embeddings on one process since it's only a forward pass
-            # do it on CPU for simplicity
-            instance_prompt_tokenized = torch.tensor(instance_prompt_tokenized["input_ids"]).to(model.device)
-            text_hidden_states = model.text_encoder(input_ids=instance_prompt_tokenized.unsqueeze(0)).last_hidden_state
-            # optionally project encoder_hidden_states
-            if model.text_encoder.config.hidden_size != model.decoder.config.hidden_size:
-                text_hidden_states = model.enc_to_dec_proj(text_hidden_states)
-                
-            null_audio_hidden_states = torch.zeros((1, 1, model.config.num_chroma))
-            null_audio_hidden_states[:, :, 0] = 1
-            if model.config.num_chroma != model.decoder.config.hidden_size:
-                null_audio_hidden_states = model.audio_enc_to_dec_proj(null_audio_hidden_states)
-                
-            # pad or truncate to config.chroma_length
-            if null_audio_hidden_states.shape[1] < model.config.chroma_length:
-                n_repeat = int(math.ceil(model.config.chroma_length / null_audio_hidden_states.shape[1]))
-                null_audio_hidden_states = null_audio_hidden_states.repeat(1, n_repeat, 1)
-            null_audio_hidden_states = null_audio_hidden_states[:, : model.config.chroma_length]
-            null_audio_hidden_states = torch.cat([null_audio_hidden_states, text_hidden_states], dim=1)
-    else:
-        with training_args.main_process_first(desc="null audio preprocessing"):
-            null_audio_hidden_states = torch.zeros((1, 1, model.config.num_chroma))
-            null_audio_hidden_states[:, :, 0] = 1
-            if model.config.num_chroma != model.decoder.config.hidden_size:
-                null_audio_hidden_states = model.audio_enc_to_dec_proj(null_audio_hidden_states)
-                
-            # pad or truncate to config.chroma_length
-            if null_audio_hidden_states.shape[1] < model.config.chroma_length:
-                n_repeat = int(math.ceil(model.config.chroma_length / null_audio_hidden_states.shape[1]))
-                null_audio_hidden_states = null_audio_hidden_states.repeat(1, n_repeat, 1)
-            null_audio_hidden_states = null_audio_hidden_states[:, : model.config.chroma_length]
-        
-        
     audio_decoder = model.audio_encoder
     def apply_audio_decoder(batch):
         labels = audio_decoder.encode(torch.tensor(batch["labels"]).to(audio_decoder.device))["audio_codes"]
-        print("")
         labels, delay_pattern_mask = model.decoder.build_delay_pattern_mask(labels, 
                                                 model.generation_config.decoder_start_token_id, 
                                                 model.generation_config.max_length + 1)
@@ -545,66 +562,24 @@ def main():
         
     with training_args.main_process_first(desc="audio target preprocessing"):
         # for now on CPU
+        # TODO: enrich for GPU
         vectorized_datasets = vectorized_datasets.map(
             apply_audio_decoder,
             num_proc=num_workers,
             desc="preprocess datasets",
         )
-        
     
-    if model.config.num_chroma != model.decoder.config.hidden_size:
-        audio_proj = model.audio_enc_to_dec_proj
-
-    def apply_audio_proj(batch):
-        if text_column_name is not None:
-            # compute text embeddings on one process since it's only a forward pass
-            # do it on CPU for simplicity
-            text_tokenized = torch.tensor(batch["input_ids"]).to(model.device)
-            text_hidden_states = model.text_encoder(input_ids=text_tokenized.unsqueeze(0)).last_hidden_state
-            # optionally project encoder_hidden_states
-            if model.text_encoder.config.hidden_size != model.decoder.config.hidden_size:
-                text_hidden_states = model.enc_to_dec_proj(text_hidden_states)
-
-        if conditional_audio_column_name is not None:
-            audio_hidden_states = torch.tensor(batch[feature_extractor_input_name])
-            if model.config.num_chroma != model.decoder.config.hidden_size:
-                audio_hidden_states = audio_proj(audio_hidden_states.to(model.device))
-                
-            # pad or truncate to config.chroma_length
-            if audio_hidden_states.shape[1] < model.config.chroma_length:
-                n_repeat = int(math.ceil(model.config.chroma_length / audio_hidden_states.shape[1]))
-                audio_hidden_states = audio_hidden_states.repeat(1, n_repeat, 1)
-            audio_hidden_states = audio_hidden_states[:, : model.config.chroma_length]
-            
-            hidden_states = torch.cat([audio_hidden_states, text_hidden_states], dim=1)
-        elif data_args.instance_prompt is not None:
-            hidden_states = null_audio_hidden_states
-        else:
-            hidden_states = torch.cat([null_audio_hidden_states, text_hidden_states], dim=1)
-
-        batch["encoder_hidden_states"] = hidden_states        
-        return batch
-    
-    with training_args.main_process_first(desc="audio proj preprocessing"):
-        # for now on CPU
-        vectorized_datasets = vectorized_datasets.map(
-            apply_audio_proj,
-            num_proc=num_workers,
-            desc="preprocess datasets",
-        )
-            
-    
+    # TODO: will it work on GPU ? unmerged for now https://github.com/huggingface/accelerate/pull/2433
     # for split in vectorized_datasets:
     #     with distributed_state.split_between_processes(vectorized_datasets[split]["labels"]) as input_labels:
     #         result = audio_decoder(input_labels)
     
-
-    # 7. Next, we can prepare the training.
-    # Let's use word error rate (WER) as our evaluation metric,
-    # instantiate a data collator and the trainer
-
-    # Define evaluation metrics during training, *i.e.* word error rate, character error rate
-    eval_metrics = {metric: evaluate.load(metric, cache_dir=model_args.cache_dir) for metric in data_args.eval_metrics}
+    if data_args.add_audio_samples_to_wandb and "wandb" in training_args.report_to:
+        if is_wandb_available():
+            from transformers.integrations import WandbCallback
+        else:
+            raise ValueError("`args.add_audio_samples_to_wandb=True` but wandb is not installed. See https://docs.wandb.ai/quickstart to install.")
+        
 
     # for large datasets it is advised to run the preprocessing on a
     # single machine first with ``args.preprocessing_only`` since there will mostly likely
@@ -614,21 +589,36 @@ def main():
     if data_args.preprocessing_only:
         logger.info(f"Data preprocessing finished. Files cached at {vectorized_datasets.cache_files}")
         return
+    
+    # 6. Next, we can prepare the training.
+    # Let's use word CLAP similary as our evaluation metric,
+    # instantiate a data collator and the trainer
+
+    # Define evaluation metrics during training, *i.e.* CLAP similarity
+    # TODO: allow using another CLAP
+    clap = AutoModel.from_pretrained("laion/larger_clap_general")
+    clap_processor = AutoProcessor.from_pretrained("laion/larger_clap_general")
+    
+    
+    def clap_similarity(texts, audios):
+        clap_inputs = clap_processor(text=texts, audios=audios.squeeze(1), return_tensors="pt")
+        text_features = clap.get_text_features(clap_inputs["input_ids"], attention_mask=clap_inputs.get("attention_mask", None))
+        audio_features = clap.get_audio_features(clap_inputs["input_features"])
+        
+        cosine_sim = torch.nn.functional.cosine_similarity(audio_features, text_features, dim=1, eps=1e-8)
+        
+        return cosine_sim.mean()
+    
+    eval_metrics = {"clap": clap_similarity}
 
     def compute_metrics(pred):
-        pred_logits = pred.predictions
-        pred_ids = np.argmax(pred_logits, axis=-1)
+        input_ids = pred.inputs
+        texts = processor.tokenizer.batch_decode(input_ids, skip_special_tokens=True)
+        audios = pred.predictions
         
-        # TODO: is it goood enough ?
-        pred.label_ids[pred.label_ids == -100] = processor.tokenizer.pad_token_id
+        results = {key: metric(texts, audios) for (key, metric) in eval_metrics.items()}
 
-        pred_str = processor.tokenizer.batch_decode(pred_ids)
-        # we do not want to group tokens when computing the metrics
-        label_str = processor.tokenizer.batch_decode(pred.label_ids, group_tokens=False)
-
-        metrics = {k: v.compute(predictions=pred_str, references=label_str) for k, v in eval_metrics.items()}
-
-        return metrics
+        return results
 
     # Now save everything to be able to create a single processor later
     # make sure all processes wait until data is saved
@@ -647,16 +637,92 @@ def main():
     # Freeze Encoders
     model.freeze_encoders()
 
-    # Initialize Trainer
-    trainer = Trainer(
-        model=model.decoder,
+    # TEST: TODO - add
+        
+    from peft import LoraConfig, get_peft_model
+
+    config = LoraConfig(
+        r=16,
+        lora_alpha=16,
+        target_modules=["k_proj", "v_proj", "q_proj", "out_proj", "fc1", "fc2"], #enc_to_dec_proj, audio_enc_to_dec_proj
+        lora_dropout=0.1,
+        bias="none",
+        modules_to_save=["classifier"],
+    )
+    model.enable_input_require_grads()
+    model = get_peft_model(model, config)
+    model.print_trainable_parameters()
+    print(model.targeted_module_names)
+
+        
+
+    # Initialize MusicgenTrainer
+    trainer = MusicgenTrainer(
+        model=model,
         data_collator=data_collator,
         args=training_args,
-        compute_metrics=None,# TODO:compute_metrics,
+        compute_metrics=compute_metrics,
         train_dataset=vectorized_datasets["train"] if training_args.do_train else None,
         eval_dataset=vectorized_datasets["eval"] if training_args.do_eval else None,
         tokenizer=processor,
     )
+    
+    if data_args.add_audio_samples_to_wandb and "wandb" in training_args.report_to:
+        def decode_predictions(processor, predictions):
+            audios = predictions.predictions
+            return {"audio": np.array(audios.squeeze(1))}
+
+
+        class WandbPredictionProgressCallback(WandbCallback):
+            """Custom WandbCallback to log model predictions during training.
+            """
+            # TODO: add logging of samples from train set + other things
+
+            def __init__(self, trainer, processor, val_dataset,
+                        num_samples=8):
+                """Initializes the WandbPredictionProgressCallback instance.
+
+                Args:
+                    trainer (Seq2SeqTrainer): The Hugging Face Seq2SeqTrainer instance.
+                    processor (AutoProcessor): The processor associated 
+                    with the model.
+                    val_dataset (Dataset): The validation dataset.
+                    num_samples (int, optional): Number of samples to select from 
+                    the validation dataset for generating predictions.
+                    Defaults to 8.
+                """
+                super().__init__()
+                self.trainer = trainer
+                self.processor = processor
+                self.sample_dataset = val_dataset.select(range(num_samples))
+
+            def on_train_end(self, args, state, control, **kwargs):
+                super().on_train_end(args, state, control, **kwargs)
+
+
+                predictions = self.trainer.predict(self.sample_dataset)
+                # decode predictions and labels
+                predictions = decode_predictions(self.processor, predictions)
+                
+                input_ids = self.sample_dataset["input_ids"]
+                texts = self.processor.tokenizer.batch_decode(input_ids, skip_special_tokens=True)
+                audios = predictions["audio"]
+
+                # log the table to wandb
+                self._wandb.log({"sample_songs": [self._wandb.Audio(audio, caption=text, sample_rate=audio_encoder_feature_extractor.sampling_rate) for (audio, text) in zip(audios, texts)]})
+
+
+
+        # Instantiate the WandbPredictionProgressCallback
+        progress_callback = WandbPredictionProgressCallback(
+            trainer=trainer,
+            processor=processor,
+            val_dataset=vectorized_datasets["eval"],
+            num_samples=2, # TODO: add to args
+        )
+
+        # Add the callback to the trainer
+        trainer.add_callback(progress_callback)
 
     # 8. Finally, we can start training
 
@@ -670,7 +736,7 @@ def main():
         else:
             checkpoint = None
 
-        train_result = trainer.train(resume_from_checkpoint=checkpoint)
+        train_result = trainer.train(resume_from_checkpoint=checkpoint, ignore_keys_for_eval=["past_key_values", "attentions"])
         trainer.save_model()
 
         metrics = train_result.metrics
