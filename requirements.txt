@@ -1,0 +1,7 @@
+transformers>=4.40.0
+peft
+torch
+accelerate
+sentencepiece
+datasets[audio]>=2.12.0
+wandb
