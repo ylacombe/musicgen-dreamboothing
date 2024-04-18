@@ -273,7 +273,7 @@ class DataSeq2SeqTrainingArguments:
         default=None,
         metadata={
             "help": (
-                "if specified and `add_metada=True`, will push the enriched dataset to the hub."
+                "if specified and `add_metada=True`, will push the enriched dataset to the hub. Useful if you want to compute it only once."
             )
         },
     )
@@ -483,9 +483,11 @@ def main():
         
         raw_datasets = raw_datasets.map(
             enrich_text,
-            num_proc=num_workers,
+            num_proc=1 if torch.cuda.device_count()>0 else num_workers,
             desc="add metadata",
         )
+        
+        del clap_model, instrument_embeddings, genre_embeddings, mood_embeddings
         
         if data_args.push_metadata_repo_id:
             raw_datasets.push_to_hub(data_args.push_metadata_repo_id)
@@ -733,7 +735,6 @@ def main():
             target_modules=target_modules, 
             lora_dropout=0.05,
             bias="none",
-            use_rslora=True,
         )
         model.enable_input_require_grads()
         model = get_peft_model(model, config)
