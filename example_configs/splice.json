@@ -1,38 +1,37 @@
 {
-    "push_to_hub": true,
-    "hub_model_id": "ylacombe/musicgen-melody-punk",
+    "push_to_hub": false,
+    "hub_model_id": "musicgen-melody-humming",
     "report_to": ["wandb"],
     "overwrite_output_dir": true,
-    "output_dir": "./humming_tmp",
+    "output_dir": "/raid/yoach//humming_tmp",
 
-    "dataset_name": "ylacombe/tiny-punk",
+    "dataset_name": "nates-test-org/splice-v2",
     "use_lora": true,
     "dataset_config_name": "default", 
-    "target_audio_column_name": "others", 
-    "instance_prompt": "punk",
-    "train_split_name": "clean",
-    "eval_split_name": "clean",
+    "target_audio_column_name": "audio", 
+    "text_column_name": "description",
+    "train_split_name": "synth",
+    "eval_split_name": "synth",
 
-    "full_generation_sample_text": "80s punk track with groovy saxophone",
+    "full_generation_sample_text": "80s blues track, with synth",
     
     "max_duration_in_seconds": 30,
     "min_duration_in_seconds": 1.0,
 
     "model_name_or_path": "facebook/musicgen-melody",
-    "model_revision": "refs/pr/14",
+
 
     "preprocessing_num_workers": 8,
 
     "do_train": true,
-    "num_train_epochs": 4,
+    "num_train_epochs": 2,
     "gradient_accumulation_steps": 8,
     "gradient_checkpointing": true,
     "per_device_train_batch_size": 2,
-    "learning_rate": 2e-4,
+    "learning_rate": 1e-4,
     "adam_beta1": 0.9,
     "adam_beta2": 0.99,
     "weight_decay": 0.1,
-
     "logging_steps": 25,
 
     "pad_token_id": 2048,
@@ -41,9 +40,9 @@
     "do_eval": true, 
     "predict_with_generate": true,
     "include_inputs_for_metrics": true,
-    "eval_steps": 100,
+    "eval_steps": 200,
     "evaluation_strategy": "steps",
-    "per_device_eval_batch_size": 1,
+    "per_device_eval_batch_size": 4,
     "max_eval_samples": 8, 
     "generation_max_length": 400,
 
@@ -52,6 +51,6 @@
 
     "dataloader_num_workers":8,
     "add_audio_samples_to_wandb": true,
-    "add_metadata": true,
-    "freeze_text_encoder": true
+    "add_metadata": false,
+    "model_revision": "refs/pr/14"
 }
