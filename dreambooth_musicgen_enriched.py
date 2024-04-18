@@ -51,13 +51,13 @@ from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 from transformers.integrations import is_wandb_available # TODO: keep ?
 from accelerate import PartialState
+from multiprocess import set_start_method
 
 
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
-check_min_version("4.38.0.dev0")
-
-require_version("datasets>=1.18.0", "To fix: pip install -r examples/pytorch/speech-recognition/requirements.txt")
+check_min_version("4.40.0.dev0")
+require_version("datasets>=2.12.0")
 
 
 logger = logging.getLogger(__name__)
@@ -85,7 +85,8 @@ class MusicgenTrainer(Seq2SeqTrainer):
         padded_tensor = pad_token_id * torch.ones(
             (tensor.shape[0], max_length, tensor.shape[2]), dtype=tensor.dtype, device=tensor.device
         )
-        padded_tensor[:, : tensor.shape[1]] = tensor
+        length = min(max_length, tensor.shape[1])
+        padded_tensor[:, : length] = tensor[:, :length]
         return padded_tensor
 
 
@@ -124,15 +125,25 @@ class ModelArguments:
         default=None,
         metadata={"help": "If specified, change the model decoder start token id."},
     )
+    freeze_text_encoder: bool = field(
+        default=True,
+        metadata={"help": "Whether to freeze the text encoder."},
+    )
+    clap_model_name_or_path: str = field(
+        default="laion/larger_clap_music_and_speech",
+        metadata={"help": "Used to compute audio similarity during evaluation. Path to pretrained model or model identifier from huggingface.co/models"}
+    )
+    use_lora: bool = field(
+        default=False,
+        metadata={"help": "Whether to use Lora."},
+    )
 
 @dataclass
 class DataSeq2SeqTrainingArguments:
     """
     Arguments pertaining to what data we are going to input our model for training and eval.
 
-    Using `HfArgumentParser` we can turn this class
-    into argparse arguments to be able to specify them on
-    the command line.
+    Using `HfArgumentParser` we can turn this class into argparse arguments to be able to specify them on the command line.
     """
 
     dataset_name: str = field(
@@ -156,7 +167,7 @@ class DataSeq2SeqTrainingArguments:
             "help": "The name of the evaluation data set split to use (via the datasets library). Defaults to 'test'"
         },
     )
-    target_audio_column_name: str = field( # TODO
+    target_audio_column_name: str = field(
         default="audio",
         metadata={"help": "The name of the dataset column containing the target audio data. Defaults to 'audio'"},
     )
@@ -170,7 +181,7 @@ class DataSeq2SeqTrainingArguments:
     )
     instance_prompt: str = field( # TODO
         default=None,
-        metadata={"help": ""}
+        metadata={"help": "Not a priority against text column name"}
     )
     overwrite_cache: bool = field(
         default=False, metadata={"help": "Overwrite the cached preprocessed datasets or not."}
@@ -197,12 +208,8 @@ class DataSeq2SeqTrainingArguments:
             )
         },
     )
-    eval_metrics: List[str] = list_field(
-        default=[],
-        metadata={"help": "A list of metrics the model should be evaluated on. E.g. `'wer cer'`"},
-    )
     max_duration_in_seconds: float = field(
-        default=20.0,
+        default=30.0,
         metadata={
             "help": (
                 "Filter audio files that are longer than `max_duration_in_seconds` seconds to"
@@ -213,23 +220,11 @@ class DataSeq2SeqTrainingArguments:
     min_duration_in_seconds: float = field(
         default=0.0, metadata={"help": "Filter audio files that are shorter than `min_duration_in_seconds` seconds"}
     )
-    preprocessing_only: bool = field(
-        default=False,
+    full_generation_sample_text: str = field(
+        default="80s blues track.",
         metadata={
             "help": (
-                "Whether to only do data preprocessing and skip training. This is especially useful when data"
-                " preprocessing errors out in distributed training due to timeout. In this case, one should run the"
-                " preprocessing in a non-distributed setup with `preprocessing_only=True` so that the cached datasets"
-                " can consequently be loaded in distributed training"
-            )
-        },
-    )
-    full_generation_sample_text: str = field(
-        default="This is a test, let's see what comes out of this.",
-        metadata={
-            "help": ( # TODO
-                "Language for multilingual fine-tuning. This argument should be set for multilingual fine-tuning "
-                "only. For English speech recognition, it should be set to `None`."
+                "This prompt will be used during evaluation as an additional generated sample."
             )
         },
     )
@@ -262,7 +257,33 @@ class DataSeq2SeqTrainingArguments:
         default=False,
         metadata={
             "help": "If set and if `wandb` in args.report_to, will add generated audio samples to wandb logs."
+            "Generates audio at the beginning and the end of the training to show evolution."
         }
+    )
+    add_metadata: bool = field(
+        default=False,
+        metadata={
+            "help": (
+                "If `True`, automatically generates song descriptions, using librosa and msclap."
+                "Don't forget to install these libraries: `pip install msclap librosa`"
+            )
+        },
+    )
+    push_metadata_repo_id: str = field(
+        default=None,
+        metadata={
+            "help": (
+                "if specified and `add_metada=True`, will push the enriched dataset to the hub."
+            )
+        },
+    )
+    num_samples_to_generate: int = field(
+        default=4,
+        metadata={
+            "help": (
+                "If logging with `wandb`, indicates the number of samples from the test set to generate"
+            )
+        },
     )
     
 @dataclass
@@ -272,7 +293,6 @@ class DataCollatorMusicGenWithPadding:
     Args:
         processor (:class:`~transformers.AutoProcessor`)
             The processor used for proccessing the data.
-        # TODO: adapt
         padding (:obj:`bool`, :obj:`str` or :class:`~transformers.tokenization_utils_base.PaddingStrategy`, `optional`, defaults to :obj:`True`):
             Select a strategy to pad the returned sequences (according to the model's padding side and padding index)
             among:
@@ -282,20 +302,10 @@ class DataCollatorMusicGenWithPadding:
               maximum acceptable input length for the model if that argument is not provided.
             * :obj:`False` or :obj:`'do_not_pad'` (default): No padding (i.e., can output a batch with sequences of
               different lengths).
-        max_length (:obj:`int`, `optional`):
-            Maximum length of the ``input_values`` of the returned list and optionally padding length (see above).
-        max_length_labels (:obj:`int`, `optional`):
-            Maximum length of the ``labels`` returned list and optionally padding length (see above).
-        pad_to_multiple_of (:obj:`int`, `optional`):
-            If set will pad the sequence to a multiple of the provided value.
-            This is especially useful to enable the use of Tensor Cores on NVIDIA hardware with compute capability >=
-            7.5 (Volta).
     """
 
     processor: AutoProcessor
     padding: Union[bool, str] = "longest"
-    pad_to_multiple_of: Optional[int] = None
-    pad_to_multiple_of_labels: Optional[int] = None
     feature_extractor_input_name: Optional[str] = "input_values"
 
     def __call__(self, features: List[Dict[str, Union[List[int], torch.Tensor]]]) -> Dict[str, torch.Tensor]:
@@ -305,16 +315,12 @@ class DataCollatorMusicGenWithPadding:
         # (bsz, seq_len, num_codebooks)
         labels = torch.nn.utils.rnn.pad_sequence(labels,batch_first=True,padding_value=-100)
         
-        
         input_ids = [{"input_ids": feature["input_ids"]} for feature in features]
         input_ids = self.processor.tokenizer.pad(input_ids, return_tensors="pt")
         
-
         batch= {"labels":labels, **input_ids}
         
-        
         if self.feature_extractor_input_name in features[0]:
-            # TODO: verify that it works
             input_values = [{self.feature_extractor_input_name: feature[self.feature_extractor_input_name]} for feature in features]
             input_values = self.processor.feature_extractor.pad(input_values, return_tensors="pt")
             
@@ -378,12 +384,15 @@ def main():
 
     # 1. First, let's load the dataset
     raw_datasets = DatasetDict()
+    num_workers = data_args.preprocessing_num_workers
+    add_metadata = data_args.add_metadata
 
     if training_args.do_train:
         raw_datasets["train"] = load_dataset(
             data_args.dataset_name,
             data_args.dataset_config_name,
             split=data_args.train_split_name,
+            num_proc=num_workers,
         )
 
         if data_args.target_audio_column_name not in raw_datasets["train"].column_names:
@@ -410,18 +419,76 @@ def main():
             )
 
         if data_args.max_train_samples is not None:
-            raw_datasets["train"] = raw_datasets["train"].select(range(data_args.max_train_samples))
+            raw_datasets["train"] = raw_datasets["train"].shuffle().select(range(data_args.max_train_samples))
 
     if training_args.do_eval:
         raw_datasets["eval"] = load_dataset(
             data_args.dataset_name,
             data_args.dataset_config_name,
             split=data_args.eval_split_name,
+            num_proc=num_workers,
         )
 
         if data_args.max_eval_samples is not None:
             raw_datasets["eval"] = raw_datasets["eval"].select(range(data_args.max_eval_samples))
 
+    # TODO: say which one is prioritaire
+    # if add_metadata and data_args.text_column_name:
+    #     raise ValueError("add_metadata and text_column_name are both True, chose one or another")
+
+    if add_metadata:
+        
+        import librosa
+        from msclap import CLAP
+        from utils import instrument_classes, genre_labels, mood_theme_classes
+        import tempfile
+        import torchaudio
+        import random
+
+        
+        clap_model = CLAP(version="2023", use_cuda=False)
+        instrument_embeddings = clap_model.get_text_embeddings(instrument_classes)
+        genre_embeddings = clap_model.get_text_embeddings(genre_labels)
+        mood_embeddings = clap_model.get_text_embeddings(mood_theme_classes)
+        
+        
+        def enrich_text(batch):
+            
+            audio, sampling_rate = batch["audio"]["array"], batch["audio"]["sampling_rate"]
+        
+            tempo, _ = librosa.beat.beat_track(y=audio, sr=sampling_rate)
+            tempo = f"{str(round(tempo))} bpm" # not usually accurate lol
+            chroma = librosa.feature.chroma_stft(y=audio, sr=sampling_rate)
+            key = np.argmax(np.sum(chroma, axis=1))
+            key = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'][key]            
+            
+            with tempfile.TemporaryDirectory() as tempdir:
+                path = os.path.join(tempdir, "tmp.wav")
+                torchaudio.save(path, torch.tensor(audio).unsqueeze(0), sampling_rate)
+                audio_embeddings = clap_model.get_audio_embeddings([path])
+
+            instrument = clap_model.compute_similarity(audio_embeddings, instrument_embeddings).argmax(dim=1)[0]
+            genre = clap_model.compute_similarity(audio_embeddings, genre_embeddings).argmax(dim=1)[0]
+            mood = clap_model.compute_similarity(audio_embeddings, mood_embeddings).argmax(dim=1)[0]
+            
+            instrument = instrument_classes[instrument]
+            genre = genre_labels[genre]
+            mood = mood_theme_classes[mood]
+            
+            metadata = [key, tempo, instrument, genre, mood]
+                
+            random.shuffle(metadata)
+            batch["metadata"] = ", ".join(metadata)     
+            return batch
+        
+        raw_datasets = raw_datasets.map(
+            enrich_text,
+            num_proc=num_workers,
+            desc="add metadata",
+        )
+        
+        if data_args.push_metadata_repo_id:
+            raw_datasets.push_to_hub(data_args.push_metadata_repo_id)
 
     # 3. Next, let's load the config as we might need it to create
     # load config
@@ -430,6 +497,7 @@ def main():
         cache_dir=model_args.cache_dir,
         token=data_args.token,
         trust_remote_code=data_args.trust_remote_code,
+        revision=model_args.model_revision,
     )
     
     # update pad token id and decoder_start_token_id
@@ -450,9 +518,14 @@ def main():
         trust_remote_code=data_args.trust_remote_code,
     )
     
+    instance_prompt = data_args.instance_prompt
     instance_prompt_tokenized = None
+    full_generation_sample_text = data_args.full_generation_sample_text
     if data_args.instance_prompt is not None:
-        instance_prompt_tokenized = processor.tokenizer(data_args.instance_prompt)
+        instance_prompt_tokenized = processor.tokenizer(instance_prompt)
+    if full_generation_sample_text is not None:
+        full_generation_sample_text = processor.tokenizer(full_generation_sample_text, return_tensors="pt")
+
 
     # create model
     model = AutoModelForTextToWaveform.from_pretrained(
@@ -461,6 +534,7 @@ def main():
         config=config,
         token=data_args.token,
         trust_remote_code=data_args.trust_remote_code,
+        revision=model_args.model_revision,
     )
     
     # take audio_encoder_feature_extractor
@@ -473,8 +547,6 @@ def main():
     # so that we just need to set the correct target sampling rate and normalize the input
     # via the `feature_extractor`
 
-    # TODO: add demucs
-    # Drop vocals
     
     # resample target audio
     dataset_sampling_rate = next(iter(raw_datasets.values())).features[data_args.target_audio_column_name].sampling_rate
@@ -491,13 +563,15 @@ def main():
             )
 
     # derive max & min input length for sample rate & max duration
-    max_target_length = data_args.max_duration_in_seconds * processor.feature_extractor.sampling_rate
-    min_target_length = data_args.min_duration_in_seconds * processor.feature_extractor.sampling_rate
+    max_target_length = data_args.max_duration_in_seconds * audio_encoder_feature_extractor.sampling_rate
+    min_target_length = data_args.min_duration_in_seconds * audio_encoder_feature_extractor.sampling_rate
     target_audio_column_name = data_args.target_audio_column_name
     conditional_audio_column_name = data_args.conditional_audio_column_name
     text_column_name = data_args.text_column_name
-    num_workers = data_args.preprocessing_num_workers
     feature_extractor_input_name = processor.feature_extractor.model_input_names[0]
+    audio_encoder_pad_token_id = config.decoder.pad_token_id
+    num_codebooks = model.decoder.config.num_codebooks
+
     
     if data_args.instance_prompt is not None:
         with training_args.main_process_first(desc="instance_prompt preprocessing"):
@@ -510,13 +584,18 @@ def main():
     def prepare_audio_features(batch):
         # load audio
         if conditional_audio_column_name is not None:
-            sample = batch[target_audio_column_name]
+            sample = batch[conditional_audio_column_name]
             inputs = processor.feature_extractor(sample["array"], sampling_rate=sample["sampling_rate"])
             batch[feature_extractor_input_name] = getattr(inputs, feature_extractor_input_name)[0]
             
-        if text_column_name is not None:
+        if text_column_name is not None and text_column_name!="None": # TODO: change after sweep
             text = batch[text_column_name]
             batch["input_ids"] = processor.tokenizer(text)["input_ids"]
+        elif add_metadata is not None and "metadata" in batch:
+            metadata = batch["metadata"]
+            if instance_prompt is not None and instance_prompt != "":
+                metadata = f"{instance_prompt}, {metadata}"
+            batch["input_ids"] = processor.tokenizer(metadata)["input_ids"]
         else:
             batch["input_ids"] = instance_prompt_tokenized
 
@@ -548,60 +627,61 @@ def main():
         )
         
     audio_decoder = model.audio_encoder
-    def apply_audio_decoder(batch):
-        labels = audio_decoder.encode(torch.tensor(batch["labels"]).to(audio_decoder.device))["audio_codes"]
-        labels, delay_pattern_mask = model.decoder.build_delay_pattern_mask(labels, 
-                                                model.generation_config.decoder_start_token_id, 
-                                                model.generation_config.max_length + 1)
+        
+    pad_labels = torch.ones((1, 1, num_codebooks, 1)) * audio_encoder_pad_token_id
+    
+    if torch.cuda.device_count() == 1:
+        audio_decoder.to("cuda")
+
+    def apply_audio_decoder(batch, rank=None):
+        if rank is not None:
+            # move the model to the right GPU if not there already
+            device = f"cuda:{(rank or 0)% torch.cuda.device_count()}"
+            audio_decoder.to(device)
+
+        with torch.no_grad():
+            labels = audio_decoder.encode(torch.tensor(batch["labels"]).to(audio_decoder.device))["audio_codes"]
+        
+        # add pad token column
+        labels = torch.cat([pad_labels.to(labels.device).to(labels.dtype), labels], dim=-1)
+        
+        labels, delay_pattern_mask = model.decoder.build_delay_pattern_mask(labels.squeeze(0), 
+                                                audio_encoder_pad_token_id, 
+                                                labels.shape[-1] + num_codebooks)
         
         labels = model.decoder.apply_delay_pattern_mask(labels, delay_pattern_mask)
         
         # the first timestamp is associated to a row full of BOS, let's get rid of it
-        batch["labels"] = labels[:, 1:]   
+        batch["labels"] = labels[:, 1:].cpu()
         return batch
         
     with training_args.main_process_first(desc="audio target preprocessing"):
-        # for now on CPU
-        # TODO: enrich for GPU
+        # Encodec doesn't truely support batching
+        # Pass samples one by one to the GPU
         vectorized_datasets = vectorized_datasets.map(
             apply_audio_decoder,
-            num_proc=num_workers,
-            desc="preprocess datasets",
+            with_rank=True,
+            num_proc=torch.cuda.device_count() if torch.cuda.device_count()>0 else num_workers,
+            desc="Apply encodec",
         )
-    
-    # TODO: will it work on GPU ? unmerged for now https://github.com/huggingface/accelerate/pull/2433
-    # for split in vectorized_datasets:
-    #     with distributed_state.split_between_processes(vectorized_datasets[split]["labels"]) as input_labels:
-    #         result = audio_decoder(input_labels)
     
     if data_args.add_audio_samples_to_wandb and "wandb" in training_args.report_to:
         if is_wandb_available():
             from transformers.integrations import WandbCallback
         else:
-            raise ValueError("`args.add_audio_samples_to_wandb=True` but wandb is not installed. See https://docs.wandb.ai/quickstart to install.")
-        
+            raise ValueError("`args.add_audio_samples_to_wandb=True` and `wandb` in `report_to` but wandb is not installed. See https://docs.wandb.ai/quickstart to install.")
 
-    # for large datasets it is advised to run the preprocessing on a
-    # single machine first with ``args.preprocessing_only`` since there will mostly likely
-    # be a timeout when running the script in distributed mode.
-    # In a second step ``args.preprocessing_only`` can then be set to `False` to load the
-    # cached dataset
-    if data_args.preprocessing_only:
-        logger.info(f"Data preprocessing finished. Files cached at {vectorized_datasets.cache_files}")
-        return
     
     # 6. Next, we can prepare the training.
     # Let's use word CLAP similary as our evaluation metric,
     # instantiate a data collator and the trainer
 
     # Define evaluation metrics during training, *i.e.* CLAP similarity
-    # TODO: allow using another CLAP
-    clap = AutoModel.from_pretrained("laion/larger_clap_general")
-    clap_processor = AutoProcessor.from_pretrained("laion/larger_clap_general")
-    
+    clap = AutoModel.from_pretrained(model_args.clap_model_name_or_path)
+    clap_processor = AutoProcessor.from_pretrained(model_args.clap_model_name_or_path)
     
     def clap_similarity(texts, audios):
-        clap_inputs = clap_processor(text=texts, audios=audios.squeeze(1), return_tensors="pt")
+        clap_inputs = clap_processor(text=texts, audios=audios.squeeze(1), padding=True, return_tensors="pt")
         text_features = clap.get_text_features(clap_inputs["input_ids"], attention_mask=clap_inputs.get("attention_mask", None))
         audio_features = clap.get_audio_features(clap_inputs["input_features"])
         
@@ -613,6 +693,7 @@ def main():
 
     def compute_metrics(pred):
         input_ids = pred.inputs
+        input_ids[input_ids==-100] = processor.tokenizer.pad_token_id
         texts = processor.tokenizer.batch_decode(input_ids, skip_special_tokens=True)
         audios = pred.predictions
         
@@ -631,31 +712,34 @@ def main():
 
     # Instantiate custom data collator
     data_collator = DataCollatorMusicGenWithPadding(
-        processor=processor, feature_extractor_input_name=feature_extractor_input_name
+        processor=processor, feature_extractor_input_name=feature_extractor_input_name,
     )
     
     # Freeze Encoders
-    model.freeze_encoders()
+    model.freeze_encoders(model_args.freeze_text_encoder)
 
-    # TEST: TODO - add
+    
+    if model_args.use_lora:
+        from peft import LoraConfig, get_peft_model
+        # TODO(YL): add modularity here
+        target_modules = ["enc_to_dec_proj", "audio_enc_to_dec_proj","k_proj", "v_proj", "q_proj", "out_proj", "fc1", "fc2", "lm_heads.0"] + [f"lm_heads.{str(i)}" for i in range(len(model.decoder.lm_heads))] + [f"embed_tokens.{str(i)}" for i in range(len(model.decoder.lm_heads))]
+            
+        if not model_args.freeze_text_encoder:
+            target_modules.extend(["k", "v", "q", "o", "wi", "wo"])
+
+        config = LoraConfig(
+            r=16,
+            lora_alpha=16,
+            target_modules=target_modules, 
+            lora_dropout=0.05,
+            bias="none",
+            use_rslora=True,
+        )
+        model.enable_input_require_grads()
+        model = get_peft_model(model, config)
+        model.print_trainable_parameters()
+        logger.info(f"Modules with Lora: {model.targeted_module_names}")
         
-    from peft import LoraConfig, get_peft_model
-
-    config = LoraConfig(
-        r=16,
-        lora_alpha=16,
-        target_modules=["k_proj", "v_proj", "q_proj", "out_proj", "fc1", "fc2"], #enc_to_dec_proj, audio_enc_to_dec_proj
-        lora_dropout=0.1,
-        bias="none",
-        modules_to_save=["classifier"],
-    )
-    model.enable_input_require_grads()
-    model = get_peft_model(model, config)
-    model.print_trainable_parameters()
-    print(model.targeted_module_names)
-
-        
-
     # Initialize MusicgenTrainer
     trainer = MusicgenTrainer(
         model=model,
@@ -674,12 +758,11 @@ def main():
 
 
         class WandbPredictionProgressCallback(WandbCallback):
-            """Custom WandbCallback to log model predictions during training.
             """
-            # TODO: add logging of samples from train set + other things
-
-            def __init__(self, trainer, processor, val_dataset,
-                        num_samples=8):
+            Custom WandbCallback to log model predictions during training.
+            """
+            def __init__(self, trainer, processor, val_dataset, additional_generation,
+                         max_new_tokens, num_samples=8,):
                 """Initializes the WandbPredictionProgressCallback instance.
 
                 Args:
@@ -694,20 +777,47 @@ def main():
                 super().__init__()
                 self.trainer = trainer
                 self.processor = processor
+                self.additional_generation = additional_generation
                 self.sample_dataset = val_dataset.select(range(num_samples))
-
-            def on_train_end(self, args, state, control, **kwargs):
-                super().on_train_end(args, state, control, **kwargs)
-
-
+                self.max_new_tokens = max_new_tokens
+                
+            def on_train_begin(self, args, state, control, **kwargs):
+                super().on_train_begin(args, state, control, **kwargs)
+                set_seed(training_args.seed)
                 predictions = self.trainer.predict(self.sample_dataset)
                 # decode predictions and labels
                 predictions = decode_predictions(self.processor, predictions)
                 
                 input_ids = self.sample_dataset["input_ids"]
                 texts = self.processor.tokenizer.batch_decode(input_ids, skip_special_tokens=True)
-                audios = predictions["audio"]
+                audios = [a for a in predictions["audio"]]
+                
+                additional_audio = self.trainer.model.generate(**self.additional_generation.to(self.trainer.model.device), max_new_tokens=self.max_new_tokens)
+                additional_text = self.processor.tokenizer.decode(self.additional_generation["input_ids"].squeeze(), skip_special_tokens=True)
+                texts.append(additional_text)
+                audios.append(additional_audio.squeeze().cpu())
+                
+                # log the table to wandb
+                self._wandb.log({"sample_songs": [self._wandb.Audio(audio, caption=text, sample_rate=audio_encoder_feature_extractor.sampling_rate) for (audio, text) in zip(audios, texts)]})
 
+
+            def on_train_end(self, args, state, control, **kwargs):
+                super().on_train_end(args, state, control, **kwargs)
+
+                set_seed(training_args.seed)
+                predictions = self.trainer.predict(self.sample_dataset)
+                # decode predictions and labels
+                predictions = decode_predictions(self.processor, predictions)
+                
+                input_ids = self.sample_dataset["input_ids"]
+                texts = self.processor.tokenizer.batch_decode(input_ids, skip_special_tokens=True)
+                audios = [a for a in predictions["audio"]]
+                
+                additional_audio = self.trainer.model.generate(**self.additional_generation.to(self.trainer.model.device), max_new_tokens=self.max_new_tokens)
+                additional_text = self.processor.tokenizer.decode(self.additional_generation["input_ids"].squeeze(), skip_special_tokens=True)
+                texts.append(additional_text)
+                audios.append(additional_audio.squeeze().cpu())
+                
                 # log the table to wandb
                 self._wandb.log({"sample_songs": [self._wandb.Audio(audio, caption=text, sample_rate=audio_encoder_feature_extractor.sampling_rate) for (audio, text) in zip(audios, texts)]})
 
@@ -718,7 +828,9 @@ def main():
             trainer=trainer,
             processor=processor,
             val_dataset=vectorized_datasets["eval"],
-            num_samples=2, # TODO: add to args
+            additional_generation=full_generation_sample_text,
+            num_samples=data_args.num_samples_to_generate,
+            max_new_tokens=training_args.generation_max_length,
         )
 
         # Add the callback to the trainer
@@ -786,4 +898,5 @@ def main():
 
 
 if __name__ == "__main__":
+    set_start_method("spawn")
     main()
