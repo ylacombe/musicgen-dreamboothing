@@ -3,11 +3,12 @@
     "hub_model_id": "musicgen-melody-humming",
     "report_to": ["wandb"],
     "overwrite_output_dir": true,
-    "output_dir": "./humming_tmp",
+    "output_dir": "/raid/yoach//humming_tmp",
 
     "dataset_name": "ylacombe/tiny-humming",
     "dataset_config_name": "default", 
     "target_audio_column_name": "audio", 
+    "text_column_name": "description",
     "instance_prompt": "humming",
     "train_split_name": "train",
     "eval_split_name": "train",
@@ -23,7 +24,7 @@
     "preprocessing_num_workers": 1,
 
     "do_train": true,
-    "num_train_epochs": 20,
+    "num_train_epochs": 2,
     "gradient_accumulation_steps": 1,
     "gradient_checkpointing": true,
     "per_device_train_batch_size": 2,
@@ -49,5 +50,6 @@
     "seed": 456,
 
     "dataloader_num_workers":8,
-    "add_audio_samples_to_wandb": true
+    "add_audio_samples_to_wandb": true,
+    "add_metadata": false
 }
