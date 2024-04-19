@@ -138,6 +138,11 @@ Some take-aways from the different experiments we've done:
 * to fine-tune and keep model ability it's essential to have a low number of epochs
 * for small datasets, a learning rate of 2e-4 gave great results
 * it doesn't actually matter to have the training loss going down, it's always better to actually listen to the output samples.
+* you can get quickly get a sense of how and if the model learned by comparing the samples before and after fine-tuning on wandb (e.g [here](https://wandb.ai/ylacombe/musicgen_finetuning_experiments/runs/er8zlhzh/workspace?nw=nwuserylacombe)).
+
+
+LoRA is a training technique for significantly reducing the number of trainable parameters. As a result, training is faster and it is easier to store the resulting weights because they are a lot smaller (~100MBs).
+
 
 ## License
 
