@@ -1,6 +1,6 @@
 {
-    "push_to_hub": true,
-    "hub_model_id": "ylacombe/musicgen-melody-punk",
+    "push_to_hub": false,
+    "hub_model_id": "ylacombe/musicgen-melody-lora-punk",
     "report_to": ["wandb"],
     "overwrite_output_dir": true,
     "output_dir": "./humming_tmp",
