@@ -175,7 +175,7 @@ Also note that you can also use a JSON file to get your parameters. For example,
 python dreambooth_musicgen.py example_configs/punk.json
 ```
 
-The JSON example above also shows to follow the training thanks to wandb (e.g of what it looks like [here](https://wandb.ai/ylacombe/musicgen_finetuning_experiments/runs/er8zlhzh/workspace?nw=nwuserylacombe)).
+The JSON example above also shows to follow the training thanks to wandb (e.g of what it looks like [here](https://wandb.ai/ylacombe/musicgen_finetuning_experiments/runs/lk6x8k4u?nw=nwuserylacombe)).
 
 ### Tips
 
@@ -183,7 +183,7 @@ Some take-aways from the different experiments we've done:
 * to fine-tune and keep model ability it's essential to have a low number of epochs.
 * for small datasets, a learning rate of 2e-4 gave great results.
 * it doesn't actually matter to have the training loss going down, it's always better to actually listen to the output samples.
-* you can get quickly get a sense of how and if the model learned by comparing the samples before and after fine-tuning on wandb (e.g [here](https://wandb.ai/ylacombe/musicgen_finetuning_experiments/runs/er8zlhzh/workspace?nw=nwuserylacombe)).
+* you can get quickly get a sense of how and if the model learned by comparing the samples before and after fine-tuning on wandb (e.g [here](https://wandb.ai/ylacombe/musicgen_finetuning_experiments/runs/lk6x8k4u?nw=nwuserylacombe)).
 * If you're not using a melody checkpoint and get `nan` errors, you might want to set `guidance_scale` to 1.0, check this [FAQ response](#im-getting-nan-errors-with-some-checkpoints-what-do-i-do).
 
 ## FAQ
@@ -200,7 +200,7 @@ Here is a quick summary of the Musicgen models that have been trained and releas
 | [Musicgen Medium](https://huggingface.co/facebook/musicgen-medium)             | Text-to-music | 1.5B       |
 | [Musicgen Large](https://huggingface.co/facebook/musicgen-large)               | Text-to-music | 3.3B       |
 
-Additionally, you can track Musicgen models on the hub [here](https://huggingface.co/models?library=transformers&other=musicgent&sort=trending). You'll find some additional checkpoints trained and released by the community, which you can use for inference straight away.
+Additionally, you can track Musicgen models on the hub [here](https://huggingface.co/models?library=transformers&other=musicgen&sort=trending). You'll find some additional checkpoints trained and released by the community, which you can use for inference straight away.
 
 **We recommend using the Musicgen Melody checkpoints, as those are the ones which gave the best results for us.**
 
