@@ -51,9 +51,12 @@ And then enter an authentication token from https://huggingface.co/settings/toke
 The script [`dreambooth_musicgen.py`](dreambooth_musicgen.py) is an end-to-end script that:
 1. Loads an audio dataset using the [`datasets`](https://huggingface.co/docs/datasets/v2.17.0/en/index) library, for example this [small subset of songs in the punk style](https://huggingface.co/datasets/ylacombe/tiny-punk) derived from the royalty-free [PogChamp Music Classification Competition](https://www.kaggle.com/competitions/kaggle-pog-series-s01e02/overview) dataset.
 2. Loads a MusicGen checkpoint from the hub, for example the [1.5B MusicGen Melody checkpoint](https://huggingface.co/facebook/musicgen-melody).
-3. (Optional) Generates automatic song descriptions with the `--add_metadata true` flag.  
+3. (Optional) Generates automatic song descriptions with the `--add_metadata true` and `--instance_prompt ANCHOR_STRING` flags. This will automatically computes instruments, genre, mood, tempo and key, as well as add the instance prompt to the description. In the following example, the instance prompt is `punk` because we use a dataset made of punk songs.  
 4. Tokenizes the text descriptions and encode the audio samples.
 5. Uses the [Transformers' Trainer](https://huggingface.co/docs/transformers/main_classes/trainer) to perform training and evaluation.
+
+> [!IMPORTANT]
+> If you want to generate automatic song descriptions, you should also install optional dependencies with the following: `pip install -e .[metadata]`  
 
 You can learn more about the different arguments of the training script by running:
 
