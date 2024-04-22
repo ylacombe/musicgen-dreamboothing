@@ -105,7 +105,7 @@ And then enter an authentication token from https://huggingface.co/settings/toke
 
 ### Training guide
 
-The script [`finetune_musicgen.py`](finetune_musicgen.py) is an end-to-end script that:
+The script [`dreambooth_musicgen.py`](dreambooth_musicgen.py) is an end-to-end script that:
 1. Loads an audio dataset using the [`datasets`](https://huggingface.co/docs/datasets/v2.17.0/en/index) library, for example this [small subset of songs in the punk style](https://huggingface.co/datasets/ylacombe/tiny-punk) derived from the royalty-free [PogChamp Music Classification Competition](https://www.kaggle.com/competitions/kaggle-pog-series-s01e02/overview) dataset.
 2. Loads a Musicgen checkpoint from the hub, for example the [1.5B Musicgen Melody checkpoint](https://huggingface.co/facebook/musicgen-melody).
 3. (Optional) Generates automatic song descriptions with the `--add_metadata true` flag.  
@@ -115,13 +115,13 @@ The script [`finetune_musicgen.py`](finetune_musicgen.py) is an end-to-end scrip
 You can learn more about the different arguments of the training script by running:
 
 ```sh
-python finetune_musicgen.py --help
+python dreambooth_musicgen.py --help
 ```
 
 To give a practical example, here's how to fine-tune [Musicgen Melody](https://huggingface.co/facebook/musicgen-melody) on 27 minutes of [Punk music](https://huggingface.co/datasets/ylacombe/tiny-punk/viewer/default/clean).
 
 ```sh
-python finetune_musicgen.py \
+python dreambooth_musicgen.py \
     --overwrite_output_dir true \
     --output_dir "./punk_tmp" \
     --dataset_name "ylacombe/tiny-punk" \
@@ -170,7 +170,7 @@ More specifically, those tricks are [LoRA](https://huggingface.co/docs/peft/en/d
 Also note that you can also use a JSON file to get your parameters. For example, [punk.json](/example_configs/punk.json):
 
 ```sh
-python finetune_musicgen.py example_configs/punk.json
+python dreambooth_musicgen.py example_configs/punk.json
 ```
 
 The JSON example above also shows to follow the training thanks to wandb (e.g of what it looks like [here](https://wandb.ai/ylacombe/musicgen_finetuning_experiments/runs/er8zlhzh/workspace?nw=nwuserylacombe)).
