@@ -2,13 +2,13 @@
 
 This repository contains lightweight training code for [MusicGen](https://github.com/facebookresearch/audiocraft/blob/main/docs/MUSICGEN.md), a state-of-the-art controllable text-to-music model. MusicGen is a single stage auto-regressive Transformer model trained over a [32kHz Encodec tokenizer](https://huggingface.co/facebook/encodec_32khz) with 4 codebooks sampled at 50 Hz.
 
-The aim is to provide **tools** to **easily fine-tune** and **dreambooth** the Musicgen model suite on **small consumer GPUs**, with little data and to leverage a series of optimizations and tricks to reduce resource consumption. For example, the model can be fine-tuned on a particular music genre or artist to give a checkpoint that generates in that given style. The aim is also to easily **share and build** on these trained checkpoints, thanks to [LoRA](https://huggingface.co/docs/peft/en/developer_guides/lora#lora) adaptors.
+The aim is to provide **tools** to **easily fine-tune** and **dreambooth** the MusicGen model suite on **small consumer GPUs**, with little data and to leverage a series of optimizations and tricks to reduce resource consumption. For example, the model can be fine-tuned on a particular music genre or artist to give a checkpoint that generates in that given style. The aim is also to easily **share and build** on these trained checkpoints, thanks to [LoRA](https://huggingface.co/docs/peft/en/developer_guides/lora#lora) adaptors.
 
 Specifically, this involves:
 * using as few data and resources as possible. We're talking fine-tuning with as little as 15mn on an A100 and as little as 10GB to 16GB of GPU utilization.
 * easily share and build models thanks to the [Hugging Face Hub](https://huggingface.co/models).
 * optionally, generate automatic music descriptions
-* optionally, training Musicgen in a [Dreambooth](https://huggingface.co/docs/diffusers/en/training/dreambooth)-like fashion, where one key-word triggers generation in a particular style
+* optionally, training MusicGen in a [Dreambooth](https://huggingface.co/docs/diffusers/en/training/dreambooth)-like fashion, where one key-word triggers generation in a particular style
 
 
 ## 📖 Quick Index
@@ -35,8 +35,8 @@ pip install soundfile
 ### Usage
 
 The training code present in this repository offers two options:
-- fine-tuning Musicgen without LoRA, in which case you can refer to the transformers docs [here](https://huggingface.co/docs/transformers/v4.39.3/en/model_doc/musicgen#generation) for Musicgen and [here](https://huggingface.co/docs/transformers/v4.39.3/en/model_doc/musicgen_melody#generation) for Musicgen Melody, in order to do inference on the newly fine-tuned checkpoint.
-- fine-tuning Musicgen with LoRA, in which case the following snippet indicates how to generate music:
+- fine-tuning MusicGen without LoRA, in which case you can refer to the transformers docs [here](https://huggingface.co/docs/transformers/v4.39.3/en/model_doc/musicgen#generation) for MusicGen and [here](https://huggingface.co/docs/transformers/v4.39.3/en/model_doc/musicgen_melody#generation) for MusicGen Melody, in order to do inference on the newly fine-tuned checkpoint.
+- fine-tuning MusicGen with LoRA, in which case the following snippet indicates how to generate music:
 
 ```python
 from peft import PeftConfig, PeftModel
@@ -50,7 +50,7 @@ model = AutoModelForTextToWaveform.from_pretrained(config.base_model_name_or_pat
 model = PeftModel.from_pretrained(model, repo_id)
 ```
 
-You can then use it in the same way you'd use Musicgen or Musicgen Melody (refers to the transformers docs [here](https://huggingface.co/docs/transformers/v4.39.3/en/model_doc/musicgen#generation) and [here](https://huggingface.co/docs/transformers/v4.39.3/en/model_doc/musicgen_melody#generation) respectively). 
+You can then use it in the same way you'd use MusicGen or MusicGen Melody (refers to the transformers docs [here](https://huggingface.co/docs/transformers/v4.39.3/en/model_doc/musicgen#generation) and [here](https://huggingface.co/docs/transformers/v4.39.3/en/model_doc/musicgen_melody#generation) respectively). 
 
 For example, with the previous model, you can generate:
 
@@ -108,7 +108,7 @@ And then enter an authentication token from https://huggingface.co/settings/toke
 
 The script [`dreambooth_musicgen.py`](dreambooth_musicgen.py) is an end-to-end script that:
 1. Loads an audio dataset using the [`datasets`](https://huggingface.co/docs/datasets/v2.17.0/en/index) library, for example this [small subset of songs in the punk style](https://huggingface.co/datasets/ylacombe/tiny-punk) derived from the royalty-free [PogChamp Music Classification Competition](https://www.kaggle.com/competitions/kaggle-pog-series-s01e02/overview) dataset.
-2. Loads a Musicgen checkpoint from the hub, for example the [1.5B Musicgen Melody checkpoint](https://huggingface.co/facebook/musicgen-melody).
+2. Loads a MusicGen checkpoint from the hub, for example the [1.5B MusicGen Melody checkpoint](https://huggingface.co/facebook/musicgen-melody).
 3. (Optional) Generates automatic song descriptions with the `--add_metadata true` flag.  
 4. Tokenizes the text descriptions and encode the audio samples.
 5. Uses the [Transformers' Trainer](https://huggingface.co/docs/transformers/main_classes/trainer) to perform training and evaluation.
@@ -119,7 +119,7 @@ You can learn more about the different arguments of the training script by runni
 python dreambooth_musicgen.py --help
 ```
 
-To give a practical example, here's how to fine-tune [Musicgen Melody](https://huggingface.co/facebook/musicgen-melody) on 27 minutes of [Punk music](https://huggingface.co/datasets/ylacombe/tiny-punk/viewer/default/clean).
+To give a practical example, here's how to fine-tune [MusicGen Melody](https://huggingface.co/facebook/musicgen-melody) on 27 minutes of [Punk music](https://huggingface.co/datasets/ylacombe/tiny-punk/viewer/default/clean).
 
 ```sh
 python dreambooth_musicgen.py \
@@ -167,7 +167,7 @@ python dreambooth_musicgen.py \
 Using a few tricks, this fine-tuning run used 10GB of GPU memory and ran in under 15 minutes on an A100 GPU. The resulting
 punk checkpoint can be found on the Hugging Face Hub under [ylacombe/musicgen-melody-lora-punk](https://huggingface.co/ylacombe/musicgen-melody-lora-punk).
 
-More specifically, those tricks are [LoRA](https://huggingface.co/docs/peft/en/developer_guides/lora#lora), [half-precision](https://en.wikipedia.org/wiki/Half-precision_floating-point_format), [gradient accumulation](https://huggingface.co/docs/transformers/en/main_classes/trainer#transformers.TrainingArguments.gradient_accumulation_steps) and [gradient checkpointing](https://huggingface.co/docs/transformers/en/main_classes/trainer#transformers.TrainingArguments.gradient_checkpointing). The largest memory saving comes from LoRA, which is a training technique for significantly reducing the number of trainable parameters. As a result, training is faster and it is easier to store the resulting weights because they are a lot smaller (~100MBs). For more information, refer to the [LoRA conceptual guide](https://huggingface.co/docs/peft/main/en/conceptual_guides/lora). Note that using the same parameters on [Musicgen Melody large](https://huggingface.co/facebook/musicgen-melody-large) only used 16GB of GPU.
+More specifically, those tricks are [LoRA](https://huggingface.co/docs/peft/en/developer_guides/lora#lora), [half-precision](https://en.wikipedia.org/wiki/Half-precision_floating-point_format), [gradient accumulation](https://huggingface.co/docs/transformers/en/main_classes/trainer#transformers.TrainingArguments.gradient_accumulation_steps) and [gradient checkpointing](https://huggingface.co/docs/transformers/en/main_classes/trainer#transformers.TrainingArguments.gradient_checkpointing). The largest memory saving comes from LoRA, which is a training technique for significantly reducing the number of trainable parameters. As a result, training is faster and it is easier to store the resulting weights because they are a lot smaller (~100MBs). For more information, refer to the [LoRA conceptual guide](https://huggingface.co/docs/peft/main/en/conceptual_guides/lora). Note that using the same parameters on [MusicGen Melody large](https://huggingface.co/facebook/musicgen-melody-large) only used 16GB of GPU.
 
 Also note that you can also use a JSON file to get your parameters. For example, [punk.json](/example_configs/punk.json):
 
@@ -190,19 +190,19 @@ Some take-aways from the different experiments we've done:
 
 ### Which base checkpoints can I use? Which ones do you recommend?
 
-Here is a quick summary of the Musicgen models that have been trained and released by Meta, and which are compatible with this training code:
+Here is a quick summary of the MusicGen models that have been trained and released by Meta, and which are compatible with this training code:
 
 | Model                                                                          | Task          | Model size |
 |--------------------------------------------------------------------------------|---------------|------------|
-| [Musicgen Melody](https://huggingface.co/facebook/musicgen-melody)             | Melody-guided | 1.5B       |
-| [Musicgen Melody Large](https://huggingface.co/facebook/musicgen-melody-large) | Melody-guided | 3.3B       |
-| [Musicgen Small](https://huggingface.co/facebook/musicgen-small)               | Text-to-music | 300M       |
-| [Musicgen Medium](https://huggingface.co/facebook/musicgen-medium)             | Text-to-music | 1.5B       |
-| [Musicgen Large](https://huggingface.co/facebook/musicgen-large)               | Text-to-music | 3.3B       |
+| [MusicGen Melody](https://huggingface.co/facebook/musicgen-melody)             | Melody-guided | 1.5B       |
+| [MusicGen Melody Large](https://huggingface.co/facebook/musicgen-melody-large) | Melody-guided | 3.3B       |
+| [MusicGen Small](https://huggingface.co/facebook/musicgen-small)               | Text-to-music | 300M       |
+| [MusicGen Medium](https://huggingface.co/facebook/musicgen-medium)             | Text-to-music | 1.5B       |
+| [MusicGen Large](https://huggingface.co/facebook/musicgen-large)               | Text-to-music | 3.3B       |
 
-Additionally, you can track Musicgen models on the hub [here](https://huggingface.co/models?library=transformers&other=musicgen&sort=trending). You'll find some additional checkpoints trained and released by the community, which you can use for inference straight away.
+Additionally, you can track MusicGen models on the hub [here](https://huggingface.co/models?library=transformers&other=musicgen&sort=trending). You'll find some additional checkpoints trained and released by the community, which you can use for inference straight away.
 
-**We recommend using the Musicgen Melody checkpoints, as those are the ones which gave the best results for us.**
+**We recommend using the MusicGen Melody checkpoints, as those are the ones which gave the best results for us.**
 
 ### This is difficult to use, do you have simpler ways to do dreambooth?
 
@@ -271,7 +271,7 @@ There seems to be an error using guidance scale with some musicgen checkpoints. 
 
 ### Can I fine-tune stereo models ?
 
-I haven't tested yet the training script with stereo Musicgen models. I welcome all contributions from the community to test and correct the training script on those!
+I haven't tested yet the training script with stereo MusicGen models. I welcome all contributions from the community to test and correct the training script on those!
 
 
 ## License
@@ -284,7 +284,7 @@ weights are licenced under CC-BY-NC 4.0.
 This library builds on top of a number of open-source giants, to whom we'd like to extend our warmest thanks for providing these tools!
 
 Special thanks to:
-- The Musicgen team from Meta AI and their [audiocraft](https://github.com/facebookresearch/audiocraft) repository.
+- The MusicGen team from Meta AI and their [audiocraft](https://github.com/facebookresearch/audiocraft) repository.
 - [Nathan Raw](https://github.com/nateraw) for his support and advice.
 - the many libraries used, to name but a few: [🤗 datasets](https://huggingface.co/docs/datasets/v2.17.0/en/index), [🤗 accelerate](https://huggingface.co/docs/accelerate/en/index), [wandb](https://wandb.ai/), and [🤗 transformers](https://huggingface.co/docs/transformers/index).
 - Hugging Face 🤗 for providing compute resources and time to explore!
@@ -292,7 +292,7 @@ Special thanks to:
 
 ## Citation
 
-If you found this repository useful, please consider citing the original Musicgen paper:
+If you found this repository useful, please consider citing the original MusicGen paper:
 
 ```
 @misc{copet2024simple,
