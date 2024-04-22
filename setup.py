@@ -35,11 +35,7 @@ _extras_dev_deps = [
     "ruff>=0.0.241,<=0.0.259",
 ]
 
-_extras_metadata_deps = [
-    "msclap",
-    "librosa",
-    "demucs"
-]
+_extras_metadata_deps = ["msclap", "librosa", "demucs"]
 
 here = os.path.abspath(os.path.dirname(__file__))
 

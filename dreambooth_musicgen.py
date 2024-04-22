@@ -321,6 +321,18 @@ class DataSeq2SeqTrainingArguments:
             )
         },
     )
+    audio_separation: bool = field(
+        default=False,
+        metadata={"help": ("If set, performs audio separation using demucs.")},
+    )
+    audio_separation_batch_size: int = field(
+        default=10,
+        metadata={
+            "help": (
+                "If `audio_separation`, indicates the batch size passed to demucs."
+            )
+        },
+    )
 
 
 @dataclass
@@ -502,12 +514,97 @@ def main():
                 range(data_args.max_eval_samples)
             )
 
+    if data_args.audio_separation:
+        try:
+            from demucs import pretrained
+        except ImportError:
+            print(
+                "To perform audio separation, you should install additional packages, run: `pip install -e .[metadata]]` or `pip install demucs`."
+            )
+        from demucs.apply import apply_model
+        from demucs.audio import convert_audio
+        from datasets import Audio
+
+        demucs = pretrained.get_model("htdemucs")
+        if torch.cuda.device_count() > 0:
+            demucs.to("cuda:0")
+
+        audio_column_name = data_args.target_audio_column_name
+
+        def wrap_audio(audio, sr):
+            return {"array": audio.cpu().numpy(), "sampling_rate": sr}
+
+        def filter_stems(batch, rank=None):
+            device = "cpu" if torch.cuda.device_count() == 0 else "cuda:0"
+            if rank is not None:
+                # move the model to the right GPU if not there already
+                device = f"cuda:{(rank or 0)% torch.cuda.device_count()}"
+                # move to device and create pipeline here because the pipeline moves to the first GPU it finds anyway
+                demucs.to(device)
+
+            if isinstance(batch[audio_column_name], list):
+                wavs = [
+                    convert_audio(
+                        torch.tensor(audio["array"][None], device=device).to(
+                            torch.float32
+                        ),
+                        audio["sampling_rate"],
+                        demucs.samplerate,
+                        demucs.audio_channels,
+                    ).T
+                    for audio in batch["audio"]
+                ]
+                wavs_length = [audio.shape[0] for audio in wavs]
+
+                wavs = torch.nn.utils.rnn.pad_sequence(
+                    wavs, batch_first=True, padding_value=0.0
+                ).transpose(1, 2)
+                stems = apply_model(demucs, wavs)
+
+                batch[audio_column_name] = [
+                    wrap_audio(s[:-1, :, :length].sum(0).mean(0), demucs.samplerate)
+                    for (s, length) in zip(stems, wavs_length)
+                ]
+
+            else:
+                audio = torch.tensor(
+                    batch[audio_column_name]["array"].squeeze(), device=device
+                ).to(torch.float32)
+                sample_rate = batch[audio_column_name]["sampling_rate"]
+                audio = convert_audio(
+                    audio, sample_rate, demucs.samplerate, demucs.audio_channels
+                )
+                stems = apply_model(demucs, audio[None])
+
+                batch[audio_column_name] = wrap_audio(
+                    stems[0, :-1].mean(0), demucs.samplerate
+                )
+
+            return batch
+
+        num_proc = (
+            torch.cuda.device_count() if torch.cuda.device_count() >= 1 else num_workers
+        )
+
+        raw_datasets = raw_datasets.map(
+            filter_stems,
+            batched=True,
+            batch_size=data_args.audio_separation_batch_size,
+            with_rank=True,
+            num_proc=num_proc,
+        )
+        raw_datasets = raw_datasets.cast_column(audio_column_name, Audio())
+
+        del demucs
+
     if add_metadata:
         try:
             from msclap import CLAP
             import librosa
-        except ImportError as e:
-            print("To add metadata, you should install additional packages, run: `pip install -e .[metadata]]")
+        except ImportError:
+            print(
+                "To add metadata, you should install additional packages, run: `pip install -e .[metadata]]"
+            )
         from utils import instrument_classes, genre_labels, mood_theme_classes
         import tempfile
         import torchaudio

@@ -51,12 +51,13 @@ And then enter an authentication token from https://huggingface.co/settings/toke
 The script [`dreambooth_musicgen.py`](dreambooth_musicgen.py) is an end-to-end script that:
 1. Loads an audio dataset using the [`datasets`](https://huggingface.co/docs/datasets/v2.17.0/en/index) library, for example this [small subset of songs in the punk style](https://huggingface.co/datasets/ylacombe/tiny-punk) derived from the royalty-free [PogChamp Music Classification Competition](https://www.kaggle.com/competitions/kaggle-pog-series-s01e02/overview) dataset.
 2. Loads a MusicGen checkpoint from the hub, for example the [1.5B MusicGen Melody checkpoint](https://huggingface.co/facebook/musicgen-melody).
-3. (Optional) Generates automatic song descriptions with the `--add_metadata true` and `--instance_prompt ANCHOR_STRING` flags. This will automatically computes instruments, genre, mood, tempo and key, as well as add the instance prompt to the description. In the following example, the instance prompt is `punk` because we use a dataset made of punk songs.  
-4. Tokenizes the text descriptions and encode the audio samples.
-5. Uses the [Transformers' Trainer](https://huggingface.co/docs/transformers/main_classes/trainer) to perform training and evaluation.
+3. (Optional) Generates automatic song descriptions with the `--add_metadata true` and `--instance_prompt ANCHOR_STRING` flags. This will automatically computes instruments, genre, mood, tempo and key, as well as add the instance prompt to the description. In the following example, the instance prompt is `punk` because we use a dataset made of punk songs. 
+4. (Optional) Get rid of lyrics with the flag `--audio_separation`. MusicGen was trained on instrumentals only, so lyrics will only degrade the model training.
+5. Tokenizes the text descriptions and encode the audio samples.
+6. Uses the [Transformers' Trainer](https://huggingface.co/docs/transformers/main_classes/trainer) to perform training and evaluation.
 
 > [!IMPORTANT]
-> If you want to generate automatic song descriptions, you should also install optional dependencies with the following: `pip install -e .[metadata]`  
+> If you want to generate automatic song descriptions or if you want to do audio separation, you should also install optional dependencies with the following: `pip install -e .[metadata]`  
 
 You can learn more about the different arguments of the training script by running:
 
@@ -205,7 +206,7 @@ In order to use this repository, you need an audio dataset from [`datasets`](htt
 Audio samples must be less than 30 seconds long and contain no lyrics (instrumentals only).
 
 > [!TIP] 
-> If you have songs with lyrics, you can use [`demucs`](https://github.com/adefossez/demucs/tree/main/demucs), a model that performs audio separation, to get rid of those.
+> If you have songs with lyrics, simply set the flag `--audio_separation`, this will performs audio separation thanks to  [`demucs`](https://github.com/adefossez/demucs/tree/main/demucs).
 > This is what I've done for the some of my datasets. I've got inspired from [this script](https://github.com/huggingface/dataspeech/blob/main/scripts/filter_audio_separation.py) to do audio separation with `datasets` and `demucs`.
 
 You can also use your own set of descriptions instead of automatically generated ones. In that case, you also need a text column with those descriptions. You can set `text_column_name` with this column name.
