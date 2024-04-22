@@ -14,6 +14,7 @@ Specifically, this involves:
 ## 📖 Quick Index
 * [Inference](#inference)
 * [Training](#training)
+* [❓ FAQ](#faq)
 
 ## Inference
 
@@ -139,9 +140,101 @@ Some take-aways from the different experiments we've done:
 * for small datasets, a learning rate of 2e-4 gave great results
 * it doesn't actually matter to have the training loss going down, it's always better to actually listen to the output samples.
 * you can get quickly get a sense of how and if the model learned by comparing the samples before and after fine-tuning on wandb (e.g [here](https://wandb.ai/ylacombe/musicgen_finetuning_experiments/runs/er8zlhzh/workspace?nw=nwuserylacombe)).
+* TODO: o.g musicgen doesn't work with guidance scale 3.0 -> should go 1.O
 
 
 LoRA is a training technique for significantly reducing the number of trainable parameters. As a result, training is faster and it is easier to store the resulting weights because they are a lot smaller (~100MBs).
+
+## FAQ
+
+### Which base checkpoints can I use? Which ones do you recommend?
+
+Here is a quick summary of the Musicgen models that have been trained and released by Meta, and which are compatible with this training code:
+
+| Model                 | Repository id | Model size |
+|-----------------------|---------------|------------|
+|       Musicgen Melody |         [facebook/musicgen-melody](https://huggingface.co/facebook/musicgen-melody) |   1.5B       |
+| Musicgen Melody Large |         [facebook/musicgen-melody-large](https://huggingface.co/facebook/musicgen-melody-large) |  3.3B        |
+|        Musicgen Small |         [facebook/musicgen-small](https://huggingface.co/facebook/musicgen-small) |  300M          |
+|       Musicgen Medium |         [facebook/musicgen-medium](https://huggingface.co/facebook/musicgen-medium) |  1.5B          |
+| Musicgen Large        |         [facebook/musicgen-large](https://huggingface.co/facebook/musicgen-large) | 3.3B           |
+
+Additionnally, you can track Musicgen models on the hub [here](https://huggingface.co/models?library=transformers&other=musicgent&sort=trending). You'll find some additionnal checkpoints trained and released by the community.
+
+**We recommand using the Musicgen Melody checkpoints, as those are the ones which gave the best results for us.**
+
+
+
+### This is difficult to use, do you have simpler ways to do dreambooth?
+
+I'm currently considering adapting the training script to:
+1. An hands-on [gradio](https://www.gradio.app/) demo that will require no code. 
+2. A notebook, with detailed steps and some explanations, that will require some Python knowledge.
+
+Of course, I welcome all contributions from the community to speed up the implementation of these projects!
+
+### What kind of datasets do I need?
+
+We rely on the [`datasets`](https://huggingface.co/docs/datasets/v2.17.0/en/index) library, which is optimized for speed and efficiency, and is deeply integrated with the [HuggingFace Hub](https://huggingface.co/datasets) which allows easy sharing and loading.
+
+In order to use this repository, you need an audio dataset from [`datasets`](https://huggingface.co/docs/datasets/v2.17.0/en/index) with at least one audio column. You can set `target_audio_column_name` with this column name.
+
+Audio samples must be less than 30 seconds long and contain no lyrics (instrumentals only).
+
+> [!TIPS]
+> If you have songs with lyrics, you can use [`demucs`](https://github.com/adefossez/demucs/tree/main/demucs), a model that performs audio separation, to get rid of those.
+> This is what I've done for the some of my datasets. I've got inspired from [this script](https://github.com/huggingface/dataspeech/blob/main/scripts/filter_audio_separation.py) to do audio separation with `datasets` and `demucs`.
+
+You can also use your own set of descriptions instead of automatically generated ones. In that case, you also need a text column with those descriptions. You can set `text_column_name` with this column name.
+
+### How do I use audio files that I have with your training code?
+
+If you song files in your computer, and want to create a dataset from [`datasets`](https://huggingface.co/docs/datasets/v2.17.0/en/index) with those, you can use easily do this.
+
+1. You first need to create a csv file that contains the full paths to the audio. The column name for those audio files could be for example `audio`.
+2. Once you have this csv file, you can load it to a dataset like this:
+```python
+from datasets import DatasetDict
+
+dataset = DatasetDict.from_csv({"train": PATH_TO_CSV_FILE})
+```
+3. You then need to convert the audio column name to [`Audio`](https://huggingface.co/docs/datasets/v2.19.0/en/package_reference/main_classes#datasets.Audio) so that `datasets` understand that it deals with audio files.
+```python
+from datasets import Audio
+dataset = dataset.cast_column("audio", Audio())
+```
+4. You can then save the datasets [locally](https://huggingface.co/docs/datasets/v2.19.0/en/package_reference/main_classes#datasets.Dataset.save_to_disk) or [push it to the hub](https://huggingface.co/docs/datasets/v2.19.0/en/package_reference/main_classes#datasets.DatasetDict.push_to_hub):
+```python
+dataset.push_to_hub(REPO_ID)
+```
+
+Note that you can make the dataset private by passing [`private=True`](https://huggingface.co/docs/datasets/v2.19.0/en/package_reference/main_classes#datasets.DatasetDict.push_to_hub.private) to the [`push_to_hub`](https://huggingface.co/docs/datasets/v2.19.0/en/package_reference/main_classes#datasets.DatasetDict.push_to_hub) method. Find other possible arguments [here](https://huggingface.co/docs/datasets/v2.19.0/en/package_reference/main_classes#datasets.DatasetDict.push_to_hub).
+
+
+### Why and how do we set `model_revision`?
+
+A discerning eye will have noticed that when using the [facebook/musicgen-melody](https://huggingface.co/facebook/musicgen-melody), we're using the following model revision:
+
+```json
+    "model_revision": "refs/pr/14",
+```
+
+This is due to a bug in [`transformers`](https://huggingface.co/docs/transformers/index) which has since been corrected, and which made some checkpoints incomplete.
+
+We're thus using the model weights from [this PR](https://huggingface.co/facebook/musicgen-melody/discussions/14), the number 14, to use the correct model weights.
+
+Note that, hopefully soon, you won't need to go through these model revisions once the correct PRs have been merged.
+
+### I'm getting `nan` errors with some checkpoints. What do I do?
+
+There seems to be an error using guidance scale with some musicgen checkpoints. If that happens, I recommend setting `guidance_scale` to 1.0 in the training parameters.
+
+
+### Can I fine-tune stereo models ?
+
+I haven't tested yet the training script with stereo Musicgen models.
+
+I welcome all contributions from the community to test and correct the training script on those!
 
 
 ## License

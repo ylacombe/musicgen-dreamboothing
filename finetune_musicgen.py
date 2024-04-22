@@ -137,6 +137,10 @@ class ModelArguments:
         default=False,
         metadata={"help": "Whether to use Lora."},
     )
+    guidance_scale: float = field(
+        default=None,
+        metadata={"help": "If specified, change the model guidance scale."},
+    )
 
 @dataclass
 class DataSeq2SeqTrainingArguments:
@@ -507,7 +511,11 @@ def main():
         "pad_token_id": model_args.pad_token_id if model_args.pad_token_id is not None else model.config.pad_token_id,
         "decoder_start_token_id": model_args.decoder_start_token_id if model_args.decoder_start_token_id is not None else model.config.decoder_start_token_id,
     })
-    
+    config.decoder.update({
+        "pad_token_id": model_args.pad_token_id if model_args.pad_token_id is not None else model.config.decoder.pad_token_id,
+        "decoder_start_token_id": model_args.decoder_start_token_id if model_args.decoder_start_token_id is not None else model.config.decoder.decoder_start_token_id,
+    })
+
     # 4. Now we can instantiate the processor and model
     # Note for distributed training, the .from_pretrained methods guarantee that only
     # one local process can concurrently download model & vocab.
@@ -718,8 +726,12 @@ def main():
     )
     
     # Freeze Encoders
-    model.freeze_encoders(model_args.freeze_text_encoder)
-
+    model.freeze_audio_encoder()
+    if model_args.freeze_text_encoder:
+        model.freeze_text_encoder()
+        
+    if model_args.guidance_scale is not None:
+        model.generation_config.guidance_scale = model_args.guidance_scale
     
     if model_args.use_lora:
         from peft import LoraConfig, get_peft_model
