@@ -53,5 +53,6 @@
     "report_to": "wandb",
     "add_audio_samples_to_wandb": true,
     "add_metadata": true,
-    "full_generation_sample_text": "80s punk track with groovy saxophone"
+    "full_generation_sample_text": "80s punk track with groovy saxophone",
+    "guidance_scale": 3.0
 }
