@@ -458,7 +458,7 @@ mood_theme_classes = [
     "trailer",
     "travel",
     "upbeat",
-    "uplifting"
+    "uplifting",
 ]
 instrument_classes = [
     "acapella",
@@ -501,5 +501,5 @@ instrument_classes = [
     "trumpet",
     "viola",
     "violin",
-    "voice"
+    "voice",
 ]
