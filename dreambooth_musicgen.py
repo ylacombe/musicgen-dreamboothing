@@ -503,8 +503,11 @@ def main():
             )
 
     if add_metadata:
-        import librosa
-        from msclap import CLAP
+        try:
+            from msclap import CLAP
+            import librosa
+        except ImportError as e:
+            print("To add metadata, you should install additional packages, run: `pip install -e .[metadata]]")
         from utils import instrument_classes, genre_labels, mood_theme_classes
         import tempfile
         import torchaudio

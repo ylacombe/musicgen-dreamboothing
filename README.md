@@ -22,9 +22,9 @@ Specifically, this involves:
 You first need to clone this repository before installing requirements.
 
 ```sh
-git clone git@github.com:ylacombe/musicgen-finetuning.git
-cd musicgen-finetuning
-pip install -r requirements.txt
+git clone git@github.com:ylacombe/musicgen-dreamboothing.git
+cd musicgen-dreamboothing
+pip install -e .
 ```
 
 Optionally, you can create a wandb account and login to it by following [this guide](https://docs.wandb.ai/quickstart). [`wandb`](https://docs.wandb.ai/) allows for better tracking of the experiments metrics and losses.

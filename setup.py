@@ -38,6 +38,7 @@ _extras_dev_deps = [
 _extras_metadata_deps = [
     "msclap",
     "librosa",
+    "demucs"
 ]
 
 here = os.path.abspath(os.path.dirname(__file__))
