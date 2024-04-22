@@ -12,72 +12,12 @@ Specifically, this involves:
 
 
 ## 📖 Quick Index
+* [Requirements](#requirements)
 * [Training](#training)
 * [Inference](#inference)
 * [❓ FAQ](#faq)
 
-## Inference
-
-### Requirements
-
-You actually don't need to install anything from this repository, simply install [transformers](https://huggingface.co/docs/transformers/main/en/index) (from source for now), [PEFT](https://huggingface.co/docs/peft/index) and [sentencepiece](https://github.com/google/sentencepiece) to get ready!
-
-```sh
-pip install git+https://github.com/huggingface/transformers peft sentencepiece
-```
-
-Additionally, the following inference snippet also uses soundfile to save the generated music:
-
-```sh
-pip install soundfile
-```
-
-### Usage
-
-The training code present in this repository offers two options:
-- fine-tuning MusicGen without LoRA, in which case you can refer to the transformers docs [here](https://huggingface.co/docs/transformers/v4.39.3/en/model_doc/musicgen#generation) for MusicGen and [here](https://huggingface.co/docs/transformers/v4.39.3/en/model_doc/musicgen_melody#generation) for MusicGen Melody, in order to do inference on the newly fine-tuned checkpoint.
-- fine-tuning MusicGen with LoRA, in which case the following snippet indicates how to generate music:
-
-```python
-from peft import PeftConfig, PeftModel
-from transformers import AutoModelForTextToWaveform
-import torch
-
-repo_id = "ylacombe/musicgen-melody-punk-lora"
-
-config = PeftConfig.from_pretrained(repo_id)
-model = AutoModelForTextToWaveform.from_pretrained(config.base_model_name_or_path, torch_dtype=torch.float16)
-model = PeftModel.from_pretrained(model, repo_id)
-```
-
-You can then use it in the same way you'd use MusicGen or MusicGen Melody (refers to the transformers docs [here](https://huggingface.co/docs/transformers/v4.39.3/en/model_doc/musicgen#generation) and [here](https://huggingface.co/docs/transformers/v4.39.3/en/model_doc/musicgen_melody#generation) respectively). 
-
-For example, with the previous model, you can generate:
-
-```python
-from transformers import AutoProcessor
-import soundfile as sf
-device = torch.device("cuda:0" if torch.cuda.device_count()>0 else "cpu")
-model.to(device)
-
-processor = AutoProcessor.from_pretrained(repo_id)
-
-inputs = processor(
-    text=["80s punk and pop track with bassy drums and synth", "punk bossa nova"],
-    padding=True,
-    return_tensors="pt",
-).to(device)
-audio_values = model.generate(**inputs, do_sample=True, guidance_scale=3, max_new_tokens=256)
-
-sampling_rate = model.config.audio_encoder.sampling_rate
-audio_values = audio_values.cpu().float().numpy()
-sf.write("musicgen_out_0.wav", audio_values[0].T, sampling_rate)
-sf.write("musicgen_out_1.wav", audio_values[1].T, sampling_rate)
-```
-
-## Training
-
-### Requirements
+## Requirements
 
 You first need to clone this repository before installing requirements.
 
@@ -104,6 +44,8 @@ huggingface-cli login
 
 And then enter an authentication token from https://huggingface.co/settings/tokens. Create a new token if you do not have one already. You should make sure that this token has "write" privileges.
 
+## Training
+
 ### Training guide
 
 The script [`dreambooth_musicgen.py`](dreambooth_musicgen.py) is an end-to-end script that:
@@ -123,19 +65,16 @@ To give a practical example, here's how to fine-tune [MusicGen Melody](https://h
 
 ```sh
 python dreambooth_musicgen.py \
-    --overwrite_output_dir \
-    --output_dir "./musicgen-melody-lora-punk" \
+    --use_lora \
+    --model_name_or_path "facebook/musicgen-melody" \
     --dataset_name "ylacombe/tiny-punk" \
     --dataset_config_name "default" \
     --target_audio_column_name "others" \
     --instance_prompt "punk" \
     --train_split_name "clean" \
     --eval_split_name "clean" \
-    --max_duration_in_seconds 30 \
-    --min_duration_in_seconds 1.0 \
-    --model_name_or_path "facebook/musicgen-melody" \
+    --output_dir "./musicgen-melody-lora-punk" \
     --model_revision "refs/pr/14" \
-    --preprocessing_num_workers 8 \
     --do_train \
     --fp16 \
     --num_train_epochs 4 \
@@ -146,11 +85,7 @@ python dreambooth_musicgen.py \
     --adam_beta1 0.9 \
     --adam_beta2 0.99 \
     --weight_decay 0.1 \
-    --dataloader_num_workers 8 \
-    --use_lora \
-    --logging_steps 1 \
-    --pad_token_id 2048 \
-    --decoder_start_token_id 2048 \
+    --guidance_scale 3.0 \
     --do_eval \
     --predict_with_generate \
     --include_inputs_for_metrics \
@@ -159,8 +94,15 @@ python dreambooth_musicgen.py \
     --per_device_eval_batch_size 1 \
     --max_eval_samples 8 \
     --generation_max_length 400 \
-    --guidance_scale 3.0 \
+    --dataloader_num_workers 8 \
+    --logging_steps 1 \
+    --max_duration_in_seconds 30 \
+    --min_duration_in_seconds 1.0 \
+    --preprocessing_num_workers 8 \
+    --pad_token_id 2048 \
+    --decoder_start_token_id 2048 \
     --seed 456 \
+    --overwrite_output_dir \
     --push_to_hub true
 ```
 
@@ -185,6 +127,45 @@ Some take-aways from the different experiments we've done:
 * it doesn't actually matter to have the training loss going down, it's always better to actually listen to the output samples.
 * you can get quickly get a sense of how and if the model learned by comparing the samples before and after fine-tuning on wandb (e.g [here](https://wandb.ai/ylacombe/musicgen_finetuning_experiments/runs/lk6x8k4u?nw=nwuserylacombe)).
 * If you're not using a melody checkpoint and get `nan` errors, you might want to set `guidance_scale` to 1.0, check this [FAQ response](#im-getting-nan-errors-with-some-checkpoints-what-do-i-do).
+
+## Inference
+
+The following snippet indicates how to do inference with LoRA fine-tuned MusicGen model:
+
+```python
+from peft import PeftConfig, PeftModel
+from transformers import AutoModelForTextToWaveform, AutoProcessor
+import torch
+import soundfile as sf
+
+device = torch.device("cuda:0" if torch.cuda.device_count()>0 else "cpu")
+
+repo_id = "ylacombe/musicgen-melody-punk-lora"
+
+config = PeftConfig.from_pretrained(repo_id)
+model = AutoModelForTextToWaveform.from_pretrained(config.base_model_name_or_path, torch_dtype=torch.float16)
+model = PeftModel.from_pretrained(model, repo_id).to(device)
+
+processor = AutoProcessor.from_pretrained(repo_id)
+
+inputs = processor(
+    text=["80s punk and pop track with bassy drums and synth", "punk bossa nova"],
+    padding=True,
+    return_tensors="pt",
+).to(device)
+audio_values = model.generate(**inputs, do_sample=True, guidance_scale=3, max_new_tokens=256)
+
+sampling_rate = model.config.audio_encoder.sampling_rate
+audio_values = audio_values.cpu().float().numpy()
+sf.write("musicgen_out_0.wav", audio_values[0].T, sampling_rate)
+sf.write("musicgen_out_1.wav", audio_values[1].T, sampling_rate)
+```
+
+The above snippet simply load the base weights from the original pre-trained checkpoint and then load on-top of it the 100MB of adaptors from the LoRA fine-tuned checkpoint. 
+
+Then, the rest of the code simply use the model it in the same way you'd use MusicGen or MusicGen Melody (refers to the transformers docs [here](https://huggingface.co/docs/transformers/v4.39.3/en/model_doc/musicgen#generation) and [here](https://huggingface.co/docs/transformers/v4.39.3/en/model_doc/musicgen_melody#generation) respectively). 
+
+Note that this training code also allows fine-tuning without LoRA, in which case you can refer to the transformers docs [here](https://huggingface.co/docs/transformers/v4.39.3/en/model_doc/musicgen#generation) for MusicGen and [here](https://huggingface.co/docs/transformers/v4.39.3/en/model_doc/musicgen_melody#generation) for MusicGen Melody, in order to do inference on the newly fine-tuned checkpoint.
 
 ## FAQ
 
