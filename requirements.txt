@@ -1,4 +1,4 @@
-transformers>=4.40.0
+git+https://github.com/huggingface/transformers
 peft
 torch
 accelerate
@@ -7,3 +7,4 @@ datasets[audio]>=2.12.0
 wandb
 evaluate
 torchaudio
+soundfile
