@@ -125,8 +125,8 @@ python dreambooth_musicgen.py \
     --overwrite_output_dir true \
     --output_dir "./punk_tmp" \
     --dataset_name "ylacombe/tiny-punk" \
-    --dataset_config_name "default" \ 
-    --target_audio_column_name "others" \ 
+    --dataset_config_name "default" \
+    --target_audio_column_name "others" \
     --instance_prompt "punk" \
     --train_split_name "clean" \
     --eval_split_name "clean" \
@@ -150,17 +150,17 @@ python dreambooth_musicgen.py \
     --logging_steps 1 \
     --pad_token_id 2048 \
     --decoder_start_token_id 2048 \
-    --do_eval true \ 
+    --do_eval true \
     --predict_with_generate true \
     --include_inputs_for_metrics true \
     --eval_steps 25 \
     --evaluation_strategy "steps" \
     --per_device_eval_batch_size 1 \
-    --max_eval_samples 8 \ 
+    --max_eval_samples 8 \
     --generation_max_length 400 \
     --seed 456 \
     --push_to_hub true \
-    --hub_model_id "musicgen-melody-lora-punk" \
+    --hub_model_id "musicgen-melody-lora-punk"
 ```
 
 Using a few tricks, this fine-tuning run used 10GB of GPU memory and ran in under 15 minutes on an A100 GPU.
@@ -173,7 +173,7 @@ Also note that you can also use a JSON file to get your parameters. For example,
 python dreambooth_musicgen.py example_configs/punk.json
 ```
 
-The JSON example above also shows to follow the training thanks to wandb (e.g of what it looks like [here](https://wandb.ai/ylacombe/musicgen_finetuning_experiments/runs/er8zlhzh/workspace?nw=nwuserylacombe)).
+The JSON example above also shows to follow the training thanks to wandb (e.g of what it looks like [here](https://wandb.ai/ylacombe/musicgen_finetuning_experiments/runs/lk6x8k4u?nw=nwuserylacombe)).
 
 ### Tips
 
@@ -181,7 +181,7 @@ Some take-aways from the different experiments we've done:
 * to fine-tune and keep model ability it's essential to have a low number of epochs.
 * for small datasets, a learning rate of 2e-4 gave great results.
 * it doesn't actually matter to have the training loss going down, it's always better to actually listen to the output samples.
-* you can get quickly get a sense of how and if the model learned by comparing the samples before and after fine-tuning on wandb (e.g [here](https://wandb.ai/ylacombe/musicgen_finetuning_experiments/runs/er8zlhzh/workspace?nw=nwuserylacombe)).
+* you can get quickly get a sense of how and if the model learned by comparing the samples before and after fine-tuning on wandb (e.g [here](https://wandb.ai/ylacombe/musicgen_finetuning_experiments/runs/lk6x8k4u?nw=nwuserylacombe)).
 * If you're not using a melody checkpoint and get `nan` errors, you might want to set `guidance_scale` to 1.0, check this [FAQ response](#im-getting-nan-errors-with-some-checkpoints-what-do-i-do).
 
 
