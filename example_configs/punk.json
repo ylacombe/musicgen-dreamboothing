@@ -1,19 +1,13 @@
 {
-    "push_to_hub": false,
-    "hub_model_id": "ylacombe/musicgen-melody-lora-punk",
-    "report_to": ["wandb"],
     "overwrite_output_dir": true,
-    "output_dir": "./humming_tmp",
+    "output_dir": "./punk_tmp",
 
     "dataset_name": "ylacombe/tiny-punk",
-    "use_lora": true,
     "dataset_config_name": "default", 
     "target_audio_column_name": "others", 
     "instance_prompt": "punk",
     "train_split_name": "clean",
     "eval_split_name": "clean",
-
-    "full_generation_sample_text": "80s punk track with groovy saxophone",
     
     "max_duration_in_seconds": 30,
     "min_duration_in_seconds": 1.0,
@@ -24,6 +18,7 @@
     "preprocessing_num_workers": 8,
 
     "do_train": true,
+    "fp16": true,
     "num_train_epochs": 4,
     "gradient_accumulation_steps": 8,
     "gradient_checkpointing": true,
@@ -32,8 +27,10 @@
     "adam_beta1": 0.9,
     "adam_beta2": 0.99,
     "weight_decay": 0.1,
+    "dataloader_num_workers": 8,
+    "use_lora": true,
 
-    "logging_steps": 25,
+    "logging_steps": 1,
 
     "pad_token_id": 2048,
     "decoder_start_token_id": 2048,
@@ -41,17 +38,20 @@
     "do_eval": true, 
     "predict_with_generate": true,
     "include_inputs_for_metrics": true,
-    "eval_steps": 100,
+    "eval_steps": 25,
     "evaluation_strategy": "steps",
     "per_device_eval_batch_size": 1,
     "max_eval_samples": 8, 
     "generation_max_length": 400,
 
-    "fp16": true,
     "seed": 456,
 
-    "dataloader_num_workers":8,
+    "push_to_hub": true,
+    "hub_model_id": "musicgen-melody-lora-punk",
+
+
+    "report_to": "wandb",
     "add_audio_samples_to_wandb": true,
     "add_metadata": true,
-    "freeze_text_encoder": true
+    "full_generation_sample_text": "80s punk track with groovy saxophone"
 }

@@ -49,7 +49,7 @@ from transformers import (
 from transformers.trainer_utils import get_last_checkpoint, is_main_process
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
-from transformers.integrations import is_wandb_available # TODO: keep ?
+from transformers.integrations import is_wandb_available
 from accelerate import PartialState
 from multiprocess import set_start_method
 
@@ -175,17 +175,17 @@ class DataSeq2SeqTrainingArguments:
         default="audio",
         metadata={"help": "The name of the dataset column containing the target audio data. Defaults to 'audio'"},
     )
-    conditional_audio_column_name: str = field( # TODO
+    text_column_name: str = field(
         default=None,
-        metadata={"help": "The name of the dataset column containing the target audio data. Defaults to 'audio'"},
+        metadata={"help": "If set, the name of the description column containing the text data. If not, you should set `add_metadata` to True, to automatically generates music descriptions ."},
     )
-    text_column_name: str = field( #TODO
+    instance_prompt: str = field(
         default=None,
-        metadata={"help": "The name of the dataset column containing the text data. Defaults to 'None'."},
+        metadata={"help": "If set and `add_metadata=True`, will add the instance prompt to the music description. For example, if you set this to `punk`, `punk` will be added to the descriptions. This allows to use this instance prompt as an anchor for your model to learn to associate it to the specificities of your dataset."}
     )
-    instance_prompt: str = field( # TODO
+    conditional_audio_column_name: str = field(
         default=None,
-        metadata={"help": "Not a priority against text column name"}
+        metadata={"help": "If set, the name of the dataset column containing conditional audio data. This is entirely optional and only used for conditional guided generation."},
     )
     overwrite_cache: bool = field(
         default=False, metadata={"help": "Overwrite the cached preprocessed datasets or not."}
@@ -391,6 +391,10 @@ def main():
     num_workers = data_args.preprocessing_num_workers
     add_metadata = data_args.add_metadata
 
+    if add_metadata and data_args.text_column_name:
+        raise ValueError("add_metadata and text_column_name are both True, chose the former if you want automatically generated music descriptions or the latter if you want to use your own set of descriptions.")
+
+
     if training_args.do_train:
         raw_datasets["train"] = load_dataset(
             data_args.dataset_name,
@@ -435,10 +439,6 @@ def main():
 
         if data_args.max_eval_samples is not None:
             raw_datasets["eval"] = raw_datasets["eval"].select(range(data_args.max_eval_samples))
-
-    # TODO: say which one is prioritaire
-    # if add_metadata and data_args.text_column_name:
-    #     raise ValueError("add_metadata and text_column_name are both True, chose one or another")
 
     if add_metadata:
         
@@ -598,7 +598,7 @@ def main():
             inputs = processor.feature_extractor(sample["array"], sampling_rate=sample["sampling_rate"])
             batch[feature_extractor_input_name] = getattr(inputs, feature_extractor_input_name)[0]
             
-        if text_column_name is not None and text_column_name!="None": # TODO: change after sweep
+        if text_column_name is not None:
             text = batch[text_column_name]
             batch["input_ids"] = processor.tokenizer(text)["input_ids"]
         elif add_metadata is not None and "metadata" in batch:
