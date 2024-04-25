@@ -25,7 +25,10 @@ You first need to clone this repository before installing requirements.
 git clone git@github.com:ylacombe/musicgen-dreamboothing.git
 cd musicgen-dreamboothing
 pip install -e .
+pip install -U git+https://github.com/huggingface/transformers
 ```
+> [!NOTE]
+> For the time being, we're installing `transformers` from source, but you won't have to do once the next version is released anytime soon. 
 
 Optionally, you can create a wandb account and login to it by following [this guide](https://docs.wandb.ai/quickstart). [`wandb`](https://docs.wandb.ai/) allows for better tracking of the experiments metrics and losses.
 
@@ -78,7 +81,6 @@ python dreambooth_musicgen.py \
     --train_split_name "clean" \
     --eval_split_name "clean" \
     --output_dir "./musicgen-melody-lora-punk" \
-    --model_revision "refs/pr/14" \
     --do_train \
     --fp16 \
     --num_train_epochs 4 \
@@ -234,20 +236,6 @@ dataset.push_to_hub(REPO_ID)
 
 Note that you can make the dataset private by passing [`private=True`](https://huggingface.co/docs/datasets/v2.19.0/en/package_reference/main_classes#datasets.DatasetDict.push_to_hub.private) to the [`push_to_hub`](https://huggingface.co/docs/datasets/v2.19.0/en/package_reference/main_classes#datasets.DatasetDict.push_to_hub) method. Find other possible arguments [here](https://huggingface.co/docs/datasets/v2.19.0/en/package_reference/main_classes#datasets.DatasetDict.push_to_hub).
 
-
-### Why and how do we set `model_revision`?
-
-A discerning eye will have noticed that when using the [facebook/musicgen-melody](https://huggingface.co/facebook/musicgen-melody), we're using the following model revision:
-
-```json
-    "model_revision": "refs/pr/14",
-```
-
-This is due to a bug in [`transformers`](https://huggingface.co/docs/transformers/index) which has since been corrected, and which made some checkpoints incomplete.
-
-We're thus using the model weights from [this PR](https://huggingface.co/facebook/musicgen-melody/discussions/14), the number 14, to use the correct model weights.
-
-Note that, hopefully soon, you won't need to go through these model revisions once the correct PRs have been merged.
 
 ### I'm getting `nan` errors with some checkpoints. What do I do?
 

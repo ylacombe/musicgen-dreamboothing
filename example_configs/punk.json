@@ -13,7 +13,6 @@
     "min_duration_in_seconds": 1.0,
 
     "model_name_or_path": "facebook/musicgen-melody",
-    "model_revision": "refs/pr/14",
 
     "preprocessing_num_workers": 8,
 
