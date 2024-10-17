@@ -1,0 +1,63 @@
+{
+    "overwrite_output_dir": true,
+    "output_dir": "./jmd-musicgen-large-v11",
+
+    "dataset_name": "/share/cp/temp/musicmed/metadata_test_32k_no_voice",
+    "dataset_config_name": "default",
+    "target_audio_column_name": "AUDIO",
+    "train_split_name": "train",
+    "eval_split_name": "eval",
+
+    "max_duration_in_seconds": 30,
+    "min_duration_in_seconds": 1.0,
+
+    "model_name_or_path": "facebook/musicgen-large",
+
+    "preprocessing_num_workers": 16,
+
+    "do_train": true,
+    "fp16": true,
+    "use_fast_tokenizer": true,
+    "freeze_text_encoder": true,
+    "num_train_epochs": 6,
+    "gradient_accumulation_steps": 8,
+    "gradient_checkpointing": true,
+    "per_device_train_batch_size": 24,
+    "max_train_samples": 10450,
+    "learning_rate": 7e-6,
+    "adam_beta1": 0.9,
+    "adam_beta2": 0.99,
+    "weight_decay": 0.1,
+    "dataloader_num_workers": 16,
+    "use_lora": true,
+
+    "logging_steps": 1,
+    "text_column_name": "METADATA",
+    "pad_token_id": 2048,
+    "decoder_start_token_id": 2048,
+
+
+    "do_eval": true,
+    "predict_with_generate": true,
+    "include_inputs_for_metrics": true,
+    "eval_steps": 25,
+    "evaluation_strategy": "steps",
+    "per_device_eval_batch_size": 4,
+    "max_eval_samples": 64,
+    "generation_max_length": 1503,
+
+    "seed": 0,
+
+    "push_to_hub": false,
+    "hub_model_id": "musicgen-large-lora-musicmed",
+
+    "audio_separation": false,
+    "audio_separation_batch_size": 32,
+
+
+    "report_to": "wandb",
+    "add_audio_samples_to_wandb": true,
+    "add_metadata": false,
+    "full_generation_sample_text": "Sad ambient track with a vibraphone and a flute",
+    "guidance_scale": 3.0
+}

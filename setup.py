@@ -27,6 +27,9 @@ _deps = [
     "evaluate",
     "torchaudio",
     "soundfile",
+    "torcheval",
+    "scipy",
+    "scikit-maad"
 ]
 
 _extras_dev_deps = [

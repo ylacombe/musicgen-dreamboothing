@@ -21,7 +21,7 @@ import os
 import sys
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Union
-
+from emotion_clf.MER import MER
 import datasets
 import numpy as np
 import torch
@@ -44,7 +44,15 @@ from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 from transformers.integrations import is_wandb_available
 from multiprocess import set_start_method
+import pandas as pd
+from emotion_clf.ml.inference_utils import TAG_MAP
+from torcheval.metrics.functional import multilabel_accuracy, multilabel_auprc
+from torcheval.metrics.audio import FrechetAudioDistance
 
+os.environ["WANDB_PROJECT"] = "Generative-Music-Medicine"
+# Set WANDB Entity to your username
+#os.environ["WANDB_ENTITY"] = "vocsep"
+os.environ["WANDB_RUN_GROUP"] = "Fine-Tuning"
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version("4.40.0.dev0")
@@ -53,6 +61,14 @@ require_version("datasets>=2.12.0")
 
 logger = logging.getLogger(__name__)
 
+df = pd.read_csv(os.path.join(os.path.dirname(__file__), "average_mood.csv"))
+
+EMOTIONS = np.array([
+        "bored", "depressed", "sad", "upset", "stressed",
+        "tense", "alert", "excited", "elated",
+        "happy", "contented", "serene", "relaxed", "calm"])
+
+EMOTION_MAP = dict(zip(EMOTIONS, np.arange(14)))
 
 def list_field(default=None, metadata=None):
     return field(default_factory=lambda: default, metadata=metadata)
@@ -467,12 +483,33 @@ def main():
         )
 
     if training_args.do_train:
-        raw_datasets["train"] = load_dataset(
-            data_args.dataset_name,
-            data_args.dataset_config_name,
-            split=data_args.train_split_name,
-            num_proc=num_workers,
-        )
+
+        if data_args.dataset_name == "fma_small":
+            dataset_path = os.path.join(os.path.dirname(__file__), "data", "ft_data.py")
+            split_path = None
+
+            raw_datasets["train"] = load_dataset(
+                "/share/hel/home/manos/data/fma/fma_small",
+                # dataset_path,
+                # split_path=split_path,
+                num_proc=num_workers,
+                cache_dir=model_args.cache_dir,
+            )
+
+
+        elif os.path.isdir(data_args.dataset_name):
+            from datasets import Dataset, concatenate_datasets
+
+            base_dir = data_args.dataset_name
+            arrow_files = [os.path.join(base_dir, fn) for fn in os.listdir(base_dir) if fn.endswith(".arrow") and fn.startswith("data")]
+            raw_datasets["train"] = concatenate_datasets([Dataset.from_file(arrow_file) for arrow_file in arrow_files], split="train")
+        else:
+            raw_datasets["train"] = load_dataset(
+                data_args.dataset_name,
+                data_args.dataset_config_name,
+                split=data_args.train_split_name,
+                num_proc=num_workers,
+            )
 
         if data_args.target_audio_column_name not in raw_datasets["train"].column_names:
             raise ValueError(
@@ -502,12 +539,7 @@ def main():
             )
 
     if training_args.do_eval:
-        raw_datasets["eval"] = load_dataset(
-            data_args.dataset_name,
-            data_args.dataset_config_name,
-            split=data_args.eval_split_name,
-            num_proc=num_workers,
-        )
+        raw_datasets["eval"] = raw_datasets["train"].select(np.arange(len(raw_datasets["train"]) // 10))
 
         if data_args.max_eval_samples is not None:
             raw_datasets["eval"] = raw_datasets["eval"].select(
@@ -552,7 +584,7 @@ def main():
                         demucs.samplerate,
                         demucs.audio_channels,
                     ).T
-                    for audio in batch["audio"]
+                    for audio in batch["AUDIO"]
                 ]
                 wavs_length = [audio.shape[0] for audio in wavs]
 
@@ -617,8 +649,8 @@ def main():
 
         def enrich_text(batch):
             audio, sampling_rate = (
-                batch["audio"]["array"],
-                batch["audio"]["sampling_rate"],
+                batch["AUDIO"]["array"],
+                batch["AUDIO"]["sampling_rate"],
             )
 
             tempo, _ = librosa.beat.beat_track(y=audio, sr=sampling_rate)
@@ -831,7 +863,7 @@ def main():
         )
 
         def is_audio_in_length_range(length):
-            return length > min_target_length and length < max_target_length
+            return length > min_target_length and length <= max_target_length
 
         # filter data that is shorter than min_target_length
         vectorized_datasets = vectorized_datasets.filter(
@@ -876,16 +908,36 @@ def main():
         return batch
 
     with training_args.main_process_first(desc="audio target preprocessing"):
-        # Encodec doesn't truely support batching
-        # Pass samples one by one to the GPU
-        vectorized_datasets = vectorized_datasets.map(
-            apply_audio_decoder,
-            with_rank=True,
-            num_proc=torch.cuda.device_count()
-            if torch.cuda.device_count() > 0
-            else num_workers,
-            desc="Apply encodec",
-        )
+        if data_args.overwrite_cache or not os.path.exists(data_args.dataset_name + "_vectorized"):
+            # Encodec doesn't truely support batching
+            # Pass samples one by one to the GPU
+            vectorized_datasets = vectorized_datasets.map(
+                apply_audio_decoder,
+                with_rank=True,
+                num_proc=torch.cuda.device_count()
+                if torch.cuda.device_count() > 0
+                else num_workers,
+                desc="Apply encodec",
+            )
+            # check if dataset is a directory
+            if os.path.isdir(data_args.dataset_name):
+                # create folder if it doesn't exist
+                os.makedirs(data_args.dataset_name + "_vectorized", exist_ok=True)
+                # save the vectorized dataset to disk
+                vectorized_datasets.save_to_disk(data_args.dataset_name + "_vectorized", max_shard_size="2GB")
+        else:
+            from datasets import Dataset, concatenate_datasets
+
+            base_dir = data_args.dataset_name + "_vectorized"
+            vectorized_datasets = DatasetDict()
+            arrow_files = [os.path.join(base_dir, "train", fn) for fn in os.listdir(os.path.join(base_dir, "train")) if
+                           fn.endswith(".arrow") and fn.startswith("data")]
+            vectorized_datasets["train"] = concatenate_datasets(
+                [Dataset.from_file(arrow_file) for arrow_file in arrow_files])
+            arrow_files = [os.path.join(base_dir, "eval", fn) for fn in os.listdir(os.path.join(base_dir, "eval")) if
+                           fn.endswith(".arrow") and fn.startswith("data")]
+            vectorized_datasets["eval"] = concatenate_datasets(
+                [Dataset.from_file(arrow_file) for arrow_file in arrow_files])
 
     if data_args.add_audio_samples_to_wandb and "wandb" in training_args.report_to:
         if is_wandb_available():
@@ -919,6 +971,75 @@ def main():
 
         return cosine_sim.mean()
 
+    # get MER model
+    mer_model = MER("/share/cp/temp/musicmed/mer_model_checkpoint/experiments/convs-m128*")
+
+    # mood_tags
+    inv_tag_map = {v: int(k) for k, v in TAG_MAP.items()}
+    MOOD_TO_EMOTION_LABEL = torch.tensor(
+        [[inv_tag_map[m], EMOTION_MAP[e]] for i, (m, e) in df.iterrows() if m in inv_tag_map.keys()]).long()
+    # mood_multipliers = torch.zeros((14,)).scatter_(0, MOOD_TO_EMOTION_LABEL[:, 1], 1, reduce="sum")
+
+    from emotion_clf.ml.loading import load_preprocessor
+    preprocessor = load_preprocessor({"name": "melspectrogram",
+                                      "params": {
+                                          "sample_rate": 32000,
+                                          "n_fft": 2048,
+                                          "f_min": 0.0,
+                                          "f_max": 16000,
+                                          "n_mels": 128
+                                      }}, "cuda")
+
+    def mer_eval(texts, audios):
+        texts = [t.lower() for t in texts]
+        labels = torch.zeros((len(texts), len(TAG_MAP)), dtype=torch.long)
+        for i, t in enumerate(texts):
+            gt_tags = [inv_tag_map[tag.replace(" ", "")] for tag in t.split(",") if tag.replace(" ", "") in inv_tag_map.keys()]
+            labels[i, gt_tags] = 1
+        # keep only words that are in mood_tags
+        # get prediction from MER model
+        audios = torch.tensor(audios).squeeze().to("cuda") # (batch_size, 1, n_samples)
+        preds = torch.zeros((len(texts), len(TAG_MAP)), dtype=torch.float32)
+        for i in range(len(texts)):
+            predicted_tags, logits = mer_model.predict(audios[i], return_logits=True)
+            preds[i] = torch.tensor(logits.mean(0))
+
+        auprc = multilabel_auprc(preds, labels, average="macro", num_labels=len(TAG_MAP))
+
+        probs = preds.sigmoid()
+
+        exact_acc = multilabel_accuracy(probs, labels, criteria='exact_match', threshold=0.3)
+        ham_acc = multilabel_accuracy(probs, labels, criteria='hamming', threshold=0.3)
+        overlap_acc = multilabel_accuracy(probs, labels, criteria='overlap', threshold=0.3)
+        contain_acc = multilabel_accuracy(probs, labels, criteria='contain', threshold=0.3)
+
+        result = {"mer_exact_acc": exact_acc, "mer_ham_acc": ham_acc, "mer_auprc": auprc, "mer_overlap_acc": overlap_acc, "mer_contain_acc": contain_acc}
+
+        # Hierarchical_maps to 14 emotions
+        emotions_probs = torch.zeros(probs.shape[0], 14).scatter_reduce(1, MOOD_TO_EMOTION_LABEL[:, 1].repeat(probs.shape[0], 1), probs, reduce="mean")
+        # take the mean (divide by multiplicity)
+        # emotions_probs = torch.div(emotions_probs, mood_multipliers)
+        # calculate labels
+        emotions_labels = torch.zeros(probs.shape[0], 14, dtype=torch.long).scatter_reduce(1, MOOD_TO_EMOTION_LABEL[:, 1].repeat(probs.shape[0], 1), labels, reduce="sum")
+        # clip to 1
+        emotions_labels = (emotions_labels >= 1).long()
+        emotion_auprc = multilabel_auprc(emotions_probs, emotions_labels, average="macro", num_labels=14)
+        emotion_contain = multilabel_accuracy(emotions_probs, emotions_labels, criteria='contain', threshold=0.3)
+
+        # Start soft evaluation
+        # shift emotions_labels to the right
+        emotions_labels = torch.roll(emotions_labels, 1, 1)
+        emotion_contain_right = multilabel_accuracy(emotions_probs, emotions_labels, criteria='contain', threshold=0.3) / 4
+        # shigt emotions_labels to the left
+        emotions_labels = torch.roll(emotions_labels, -2, 1)
+        emotion_contain_left = multilabel_accuracy(emotions_probs, emotions_labels, criteria='contain', threshold=0.3) / 4
+        # average the three contain accuracies left and right should have half the weight of the center
+        emotion_contain = emotion_contain + emotion_contain_right + emotion_contain_left
+
+        result["mer_emotion_acc"] = emotion_auprc
+        result["mer_emotion_auprc"] = emotion_contain
+        return result
+
     eval_metrics = {"clap": clap_similarity}
 
     def compute_metrics(pred):
@@ -928,6 +1049,9 @@ def main():
         audios = pred.predictions
 
         results = {key: metric(texts, audios) for (key, metric) in eval_metrics.items()}
+
+        for k, v in mer_eval(texts, audios).items():
+            results[k] = v
 
         return results
 
@@ -1004,7 +1128,7 @@ def main():
 
         def decode_predictions(processor, predictions):
             audios = predictions.predictions
-            return {"audio": np.array(audios.squeeze(1))}
+            return {"AUDIO": np.array(audios.squeeze(1))}
 
         class WandbPredictionProgressCallback(WandbCallback):
             """
@@ -1049,7 +1173,7 @@ def main():
                 texts = self.processor.tokenizer.batch_decode(
                     input_ids, skip_special_tokens=True
                 )
-                audios = [a for a in predictions["audio"]]
+                audios = [a for a in predictions["AUDIO"]]
 
                 additional_audio = self.trainer.model.generate(
                     **self.additional_generation.to(self.trainer.model.device),
@@ -1076,7 +1200,7 @@ def main():
                     }
                 )
 
-            def on_train_end(self, args, state, control, **kwargs):
+            def on_epoch_end(self, args, state, control, **kwargs):
                 super().on_train_end(args, state, control, **kwargs)
 
                 set_seed(training_args.seed)
@@ -1088,7 +1212,7 @@ def main():
                 texts = self.processor.tokenizer.batch_decode(
                     input_ids, skip_special_tokens=True
                 )
-                audios = [a for a in predictions["audio"]]
+                audios = [a for a in predictions["AUDIO"]]
 
                 additional_audio = self.trainer.model.generate(
                     **self.additional_generation.to(self.trainer.model.device),
